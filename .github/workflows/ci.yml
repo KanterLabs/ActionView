@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-unit:
+    # Lint + pure-JS core tests: short and light.
+    # Public repo on self-hosted runners: never run fork PRs (untrusted code) on them.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: homelab
+    container:
+      image: ubuntu:26.04
+    steps:
+      - name: Install toolchain
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            gjs nodejs npm libglib2.0-bin ca-certificates git
+      - uses: actions/checkout@v4
+      - name: Lint
+        run: npx --yes eslint@10 .
+      - name: Core tests (gjs)
+        run: gjs -m tests/core.test.js
+      - name: Core tests (node)
+        run: node tests/core.test.js
+      - name: Schema compiles
+        run: glib-compile-schemas --strict --dry-run actionview@kanterlabs.dev/schemas
+
+  headless-shell:
+    # Real gnome-shell 50 in a headless Wayland session: scenario screenshots,
+    # prefs window, and 20 enable/disable cycles. Integration suite → heavy tier.
+    # Public repo on self-hosted runners: never run fork PRs (untrusted code) on them.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: homelab-heavy
+    container:
+      image: ubuntu:26.04
+    steps:
+      - name: Install gnome-shell
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            gjs gnome-shell dbus dbus-daemon python3 python3-dbusmock libglib2.0-bin \
+            adwaita-icon-theme ca-certificates git
+      - name: System bus + mock logind
+        # gnome-shell 50 dies at startup without a system bus and org.freedesktop.login1,
+        # neither of which exists in a container. Same approach as GNOME's own test tooling.
+        run: |
+          mkdir -p /run/dbus
+          dbus-daemon --system --fork
+          nohup python3 -m dbusmock --system --template logind >/tmp/logind.log 2>&1 &
+          sleep 2
+      - uses: actions/checkout@v4
+      - name: Smoke test
+        run: tools/smoke.sh build/smoke
+      - uses: actions/upload-artifact@v4
+        # Screenshots are for debugging a failure; don't spend org artifact quota on green runs.
+        if: failure()
+        continue-on-error: true
+        with:
+          name: smoke-screenshots
+          path: build/smoke/
+          retention-days: 3

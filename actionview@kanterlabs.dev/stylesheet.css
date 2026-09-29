@@ -1,0 +1,95 @@
+/* Palette mirrors the Forge web page: good #7bd88f, warn #e8c477, bad #ff8b8b, link #8abfff. */
+
+/* ── Panel ─────────────────────────────────────────────────────────────── */
+.actionview-panel-label {
+  padding-left: 4px;
+  font-feature-settings: "tnum";
+}
+.actionview-indicator.actionview-level-idle .actionview-icon { opacity: 0.6; }
+.actionview-indicator.actionview-level-running .actionview-icon,
+.actionview-indicator.actionview-level-running .actionview-panel-label { color: -st-accent-color; }
+.actionview-indicator.actionview-level-queued .actionview-icon,
+.actionview-indicator.actionview-level-queued .actionview-panel-label,
+.actionview-indicator.actionview-level-warning .actionview-icon { color: #e8c477; }
+.actionview-indicator.actionview-level-failure .actionview-icon,
+.actionview-indicator.actionview-level-failure .actionview-panel-label,
+.actionview-indicator.actionview-level-critical .actionview-icon,
+.actionview-indicator.actionview-level-critical .actionview-panel-label { color: #ff8b8b; }
+.actionview-indicator.actionview-level-offline .actionview-icon,
+.actionview-indicator.actionview-level-stale .actionview-icon { opacity: 0.45; }
+.actionview-indicator.actionview-level-offline .actionview-panel-label,
+.actionview-indicator.actionview-level-stale .actionview-panel-label { color: #a5adb8; }
+
+/* ── Menu ──────────────────────────────────────────────────────────────── */
+.actionview-menu { width: 440px; }
+
+.actionview-header { spacing: 10px; }
+.actionview-header-title { font-weight: bold; }
+.actionview-header-status { font-size: 0.85em; color: #a5adb8; }
+.actionview-icon-button {
+  padding: 6px;
+  border-radius: 99px;
+}
+.actionview-icon-button:hover,
+.actionview-icon-button:focus { background-color: rgba(255, 255, 255, 0.1); }
+
+.actionview-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 5px;
+  background-color: #a5adb8;
+}
+.actionview-dot.actionview-level-idle { background-color: #7bd88f; }
+.actionview-dot.actionview-level-running { background-color: -st-accent-color; }
+.actionview-dot.actionview-level-queued,
+.actionview-dot.actionview-level-warning,
+.actionview-dot.actionview-level-stale { background-color: #e8c477; }
+.actionview-dot.actionview-level-failure,
+.actionview-dot.actionview-level-critical,
+.actionview-dot.actionview-level-offline { background-color: #ff8b8b; }
+
+.actionview-heading { padding-top: 2px; padding-bottom: 2px; }
+.actionview-heading-label { font-weight: bold; font-size: 0.9em; }
+.actionview-heading-detail { font-size: 0.85em; color: #a5adb8; }
+.actionview-placeholder { color: #a5adb8; font-style: italic; }
+
+.actionview-row { spacing: 8px; }
+.actionview-row-title { font-weight: 500; }
+.actionview-row-right {
+  padding-left: 12px;
+  font-feature-settings: "tnum";
+  color: #a5adb8;
+}
+.actionview-row-subtitle { font-size: 0.85em; color: #a5adb8; }
+.actionview-glyph { min-width: 14px; font-weight: bold; }
+
+.actionview-level-running { color: -st-accent-color; }
+.actionview-level-idle-ok { color: #7bd88f; }
+.actionview-level-queued,
+.actionview-level-warning { color: #e8c477; }
+.actionview-level-failure,
+.actionview-level-critical { color: #ff8b8b; }
+.actionview-muted { color: #6b7380; }
+
+/* Trends */
+.actionview-tiles { spacing: 6px; }
+.actionview-tile {
+  padding: 6px 7px;
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+.actionview-tile-label { font-size: 0.8em; color: #a5adb8; }
+.actionview-tile-value { font-size: 0.8em; font-feature-settings: "tnum"; }
+
+/* Capacity */
+.actionview-pool { spacing: 10px; }
+.actionview-pool-name { min-width: 60px; }
+.actionview-pool-text { font-size: 0.85em; color: #a5adb8; }
+.actionview-bar {
+  height: 6px;
+  border-radius: 3px;
+  background-color: rgba(255, 255, 255, 0.1);
+}
+.actionview-bar-segment { height: 6px; }
+.actionview-bar-busy { background-color: #7bd88f; }
+.actionview-bar-pending { background-color: #e8c477; }

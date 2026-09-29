@@ -1,0 +1,6 @@
+{
+  "uuid": "actionview-smoke@kanterlabs.dev",
+  "name": "ActionView smoke driver (test only)",
+  "description": "Drives ActionView inside a headless gnome-shell: scenario screenshots and enable/disable leak cycles.",
+  "shell-version": ["48", "49", "50"]
+}
