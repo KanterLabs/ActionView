@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""Run ActionView's lightweight release checks locally and in CI."""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+from release_lib import ReleaseError, load_config, validate_metadata
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config-only",
+        action="store_true",
+        help="validate release metadata and configuration without running source checks",
+    )
+    parser.add_argument(
+        "--with-headless",
+        action="store_true",
+        help="also run the real GNOME Shell smoke suite (scheduled/heavy use only)",
+    )
+    return parser.parse_args()
+
+
+def run(root: Path, *command: str) -> None:
+    print(f"check: {' '.join(command)}", flush=True)
+    subprocess.run(command, cwd=root, check=True)
+
+
+def main() -> int:
+    args = parse_args()
+    root = Path(__file__).resolve().parent.parent
+    try:
+        config = load_config(root)
+        validate_metadata(root, config)
+        print(f"check: release {config['version']} / GNOME metadata {config['gnome_version']}")
+        if args.config_only:
+            return 0
+        run(root, "npx", "--yes", "eslint@10", ".")
+        run(root, "gjs", "-m", "tests/core.test.js")
+        run(root, "node", "tests/core.test.js")
+        run(root, "glib-compile-schemas", "--strict", "--dry-run",
+            "actionview@kanterlabs.dev/schemas")
+        if args.with_headless:
+            run(root, "tools/smoke.sh", "build/smoke")
+        return 0
+    except (ReleaseError, OSError, subprocess.CalledProcessError) as exc:
+        print(f"ci/check: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

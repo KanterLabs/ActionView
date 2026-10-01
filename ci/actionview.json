@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "product": "ActionView",
+  "project": "actionview@kanterlabs.dev",
+  "uuid": "actionview@kanterlabs.dev",
+  "version": "0.1.0",
+  "release_channel": "candidate",
+  "tag_prefix": "v",
+  "gnome_version": 1,
+  "shell_versions": [
+    48,
+    49,
+    50
+  ],
+  "artifact": {
+    "name": "actionview@kanterlabs.dev.shell-extension.zip",
+    "kind": "gnome-shell-extension",
+    "checksum": "SHA256SUMS",
+    "manifest": "artifact-manifest.json",
+    "package_command": "ci/package",
+    "artifact_test_command": "ci/test-artifact"
+  },
+  "targets": [
+    {
+      "id": "ubuntu-26.04-gnome50",
+      "os": "ubuntu",
+      "image": "ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78",
+      "desktop": "GNOME Shell 50",
+      "runner": "homelab-heavy",
+      "required": true,
+      "mode": "container",
+      "check_command": "ci/test-artifact --platform ubuntu",
+      "smoke_command": "ci/test-artifact --platform ubuntu --smoke",
+      "smoke_schedule": "parent-scheduled"
+    },
+    {
+      "id": "fedora-43-gnome49",
+      "os": "fedora",
+      "image": null,
+      "desktop": "Fedora Workstation GNOME 49.9",
+      "runner": "homelab-heavy",
+      "required": true,
+      "mode": "disposable-vm-harness",
+      "check_command": "ci/test-artifact --platform fedora",
+      "smoke_command": "ci/test-artifact --platform fedora --smoke",
+      "harness": "parent-supplied",
+      "smoke_schedule": "parent-scheduled"
+    }
+  ],
+  "forge": {
+    "operations_path": "/api/operations",
+    "schema_version": 5,
+    "public_setup_reference": "examples/forge-adapter/README.md",
+    "disposable_test_endpoint": "tools/forge-test-server.py",
+    "production_endpoint": null,
+    "credentials": "none"
+  },
+  "workflow": {
+    "light_runner": "homelab",
+    "heavy_runner": "homelab-heavy",
+    "publish_requires": [
+      "package",
+      "artifact-test-ubuntu",
+      "artifact-test-fedora",
+      "ci-gate"
+    ],
+    "publication_credentials": "publish-job-only",
+    "canonical_executor": "parent-selected-forge",
+    "duplicate_execution": "forbidden"
+  }
+}

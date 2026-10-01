@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""Install and exercise a downloaded ActionView release artifact."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from release_lib import (
+    ARTIFACT_NAME,
+    ReleaseError,
+    find_artifact_bundle,
+    git_output,
+    load_config,
+    validate_manifest,
+)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "artifact",
+        nargs="?",
+        type=Path,
+        default=Path("build/release"),
+        help="downloaded ZIP or bundle directory (default: build/release)",
+    )
+    parser.add_argument("--platform", choices=("ubuntu", "fedora"), default="ubuntu")
+    parser.add_argument(
+        "--source-sha",
+        help="expected source revision; defaults to the checked-out HEAD",
+    )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="permit a local package marked source_dirty (never set by release CI)",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="run the platform's real GNOME smoke hook against the downloaded ZIP",
+    )
+    parser.add_argument(
+        "--forge-e2e",
+        action="store_true",
+        help="exercise a loopback disposable Forge endpoint (healthy/stale/unreachable)",
+    )
+    parser.add_argument(
+        "--backend-url",
+        help="probe an explicitly supplied compatible Forge URL; never defaults to production",
+    )
+    parser.add_argument("--report", type=Path, help="write a JSON evidence report at this path")
+    return parser.parse_args()
+
+
+def run(root: Path, *command: str, env: dict[str, str] | None = None) -> None:
+    print(f"artifact-test: {' '.join(command)}", flush=True)
+    subprocess.run(command, cwd=root, env=env, check=True)
+
+
+def request_json(url: str, *, require_operations: bool = True) -> dict:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            if response.status < 200 or response.status >= 300:
+                raise ReleaseError(f"Forge endpoint returned HTTP {response.status}")
+            value = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        raise ReleaseError(f"Forge endpoint returned HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise ReleaseError(f"Forge endpoint probe failed: {exc}") from exc
+    if not isinstance(value, dict) or (require_operations and value.get("schema_version") is None):
+        raise ReleaseError("Forge endpoint did not return an /api/operations object")
+    return value
+
+
+def probe_backend(url: str) -> dict[str, object]:
+    base = url.rstrip("/")
+    payload = request_json(f"{base}/api/operations")
+    if payload.get("schema_version") != 5:
+        raise ReleaseError(
+            f"Forge endpoint schema_version {payload.get('schema_version')!r} != 5"
+        )
+    if not payload.get("served_at") or not payload.get("generated_at"):
+        raise ReleaseError("Forge endpoint omitted served_at/generated_at")
+    sources = payload.get("sources")
+    source_states = {
+        str(name): value.get("state")
+        for name, value in (sources.items() if isinstance(sources, dict) else [])
+        if isinstance(value, dict)
+    }
+    return {
+        "url": base,
+        "schema_version": payload["schema_version"],
+        "served_at": payload["served_at"],
+        "generated_at": payload["generated_at"],
+        "source_states": source_states,
+    }
+
+
+def expect_backend_failure(url: str, label: str) -> dict[str, object]:
+    try:
+        probe_backend(url)
+    except ReleaseError as error:
+        return {"status": "rejected", "error": str(error), "label": label}
+    raise ReleaseError(f"disposable {label} backend state unexpectedly passed validation")
+
+
+def run_disposable_backend(root: Path) -> dict[str, object]:
+    fixtures = root / "tests/fixtures/operations"
+    with tempfile.TemporaryDirectory(prefix="actionview-forge-") as tmp:
+        state = Path(tmp) / "scenario"
+        state.write_text("base\n", encoding="utf-8")
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(root / "tools/forge-test-server.py"),
+                "--fixtures",
+                str(fixtures),
+                "--state-file",
+                str(state),
+                "--port",
+                "0",
+            ],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            ready = process.stdout.readline().strip() if process.stdout else ""
+            if not ready.startswith("READY "):
+                error = process.stderr.read() if process.stderr else ""
+                raise ReleaseError(f"disposable Forge server did not start: {ready} {error}")
+            url = ready.removeprefix("READY ").strip()
+            healthy = probe_backend(url)
+            configured = {
+                "status": "configured",
+                "healthz": request_json(f"{url}/healthz", require_operations=False).get("status"),
+                "operations": healthy,
+            }
+            state.write_text("collector-hung\n", encoding="utf-8")
+            collector_stale = probe_backend(url)
+            if collector_stale["generated_at"] == collector_stale["served_at"]:
+                raise ReleaseError("disposable stale scenario did not advance served_at independently")
+            state.write_text("source-stale\n", encoding="utf-8")
+            source_stale = probe_backend(url)
+            if source_stale["source_states"].get("github") != "stale":
+                raise ReleaseError("disposable source-stale scenario did not mark github stale")
+            state.write_text("schema-future\n", encoding="utf-8")
+            config_rejected = expect_backend_failure(url, "unsupported-schema")
+            state.write_text("offline\n", encoding="utf-8")
+            offline = expect_backend_failure(url, "offline")
+            process.terminate()
+            process.wait(timeout=5)
+            unreachable = expect_backend_failure(url, "unreachable")
+            return {
+                "reachable": healthy,
+                "configured": configured,
+                "stale": {
+                    "collector": collector_stale,
+                    "source": source_stale,
+                },
+                "config": config_rejected,
+                "offline": offline,
+                "unreachable": unreachable,
+            }
+        finally:
+            if process.poll() is None:
+                process.send_signal(signal.SIGTERM)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+
+
+def install_downloaded_zip(root: Path, zip_path: Path, tmp: Path) -> Path:
+    downloaded = tmp / ARTIFACT_NAME
+    shutil.copy2(zip_path, downloaded)
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(tmp / "home"),
+            "XDG_CONFIG_HOME": str(tmp / "config"),
+            "XDG_DATA_HOME": str(tmp / "data"),
+            "XDG_CACHE_HOME": str(tmp / "cache"),
+        }
+    )
+    for key in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
+        Path(env[key]).mkdir(parents=True, exist_ok=True)
+    run(root, "gnome-extensions", "install", "--force", str(downloaded), env=env)
+    installed = Path(env["XDG_DATA_HOME"]) / "gnome-shell/extensions/actionview@kanterlabs.dev"
+    if not installed.is_dir():
+        raise ReleaseError(f"gnome-extensions did not install {installed}")
+    try:
+        installed_metadata = json.loads((installed / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ReleaseError(f"installed metadata.json is unreadable: {error}") from error
+    if installed_metadata.get("uuid") != "actionview@kanterlabs.dev":
+        raise ReleaseError("installed downloaded metadata has the wrong UUID")
+    run(root, "glib-compile-schemas", "--strict", "--dry-run", str(installed / "schemas"), env=env)
+    return downloaded
+
+
+def run_smoke(root: Path, platform: str, downloaded: Path, tmp: Path) -> None:
+    if platform == "fedora":
+        command = os.environ.get("ACTIONVIEW_FEDORA_GNOME_HARNESS", "").strip()
+        if not command:
+            raise ReleaseError(
+                "Fedora GNOME smoke requires ACTIONVIEW_FEDORA_GNOME_HARNESS from the parent VM harness"
+            )
+        # The parent-supplied harness owns VM lifecycle. The artifact path is
+        # passed as the final argument so it can install the exact downloaded
+        # bytes; no credentials are supplied by this command.
+        run(root, *command.split(), str(downloaded))
+        return
+    env = os.environ.copy()
+    env["ACTIONVIEW_SMOKE_ZIP"] = str(downloaded)
+    run(root, "tools/smoke.sh", str(tmp / "smoke"), env=env)
+
+
+def main() -> int:
+    args = parse_args()
+    root = Path(__file__).resolve().parent.parent
+    report: dict[str, object] = {"platform": args.platform}
+    try:
+        config = load_config(root)
+        bundle, zip_path, manifest_path = find_artifact_bundle(args.artifact, root)
+        expected_sha = args.source_sha or os.environ.get("ACTIONVIEW_SOURCE_SHA")
+        if not expected_sha:
+            expected_sha = git_output(root, "rev-parse", "HEAD")
+        manifest = validate_manifest(
+            bundle,
+            zip_path,
+            manifest_path,
+            root,
+            config,
+            expected_source_sha=expected_sha,
+            allow_dirty=args.allow_dirty,
+        )
+        report.update(
+            {
+                "artifact": manifest["artifact"],
+                "version": manifest["version"],
+                "source_sha": manifest["source_sha"],
+                "sha256": manifest["sha256"],
+            }
+        )
+        with tempfile.TemporaryDirectory(prefix="actionview-artifact-test-") as tmp_name:
+            tmp = Path(tmp_name)
+            downloaded = install_downloaded_zip(root, zip_path, tmp)
+            report["downloaded_path"] = ARTIFACT_NAME
+            if args.smoke:
+                run_smoke(root, args.platform, downloaded, tmp)
+                report["smoke"] = "passed"
+            if args.backend_url:
+                report["backend"] = probe_backend(args.backend_url)
+            if args.forge_e2e:
+                report["disposable_backend"] = run_disposable_backend(root)
+        report["status"] = "passed"
+        report_path = args.report or (bundle / f"artifact-test-{args.platform}.json")
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(f"artifact-test: passed; report {report_path}")
+        return 0
+    except (ReleaseError, OSError, subprocess.CalledProcessError) as exc:
+        report.update({"status": "failed", "error": str(exc)})
+        if args.report:
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(f"ci/test-artifact: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

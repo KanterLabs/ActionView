@@ -1,0 +1,111 @@
+name: Release candidate (Gitea canonical)
+
+# Gitea 1.27.3 runs this adapter only when the infrastructure owner selects
+# Gitea as canonical. Imported GitHub actions are disabled on that instance;
+# checkout is the runner builtin and the only artifact action is the pinned
+# Gitea-compatible v3 fork. GitHub still runs its mirror path after this
+# canonical receipt is verified.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Exact commit SHA to package
+        required: true
+        type: string
+      version:
+        description: Semantic version; must match ci/release.json
+        required: true
+        default: 0.1.0
+        type: string
+      publish:
+        description: Publish through the canonical Gitea adapter
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actionview-release-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_CONFIG: ci/release.json
+
+jobs:
+  package-and-publish:
+    name: Package, test, and publish candidate
+    if: >-
+      vars.ACTIONVIEW_CANONICAL_RELEASE_FORGE == 'gitea' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: homelab-heavy
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    container:
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    steps:
+      - name: Install release tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git python3 nodejs npm gnome-shell gjs libglib2.0-bin
+      - name: Checkout immutable revision with the Gitea builtin
+        uses: builtin:checkout
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || inputs.release_ref }}
+          fetch-depth: 0
+      - name: Validate tag and package exact source
+        env:
+          RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+          RELEASE_REF: ${{ github.event_name == 'push' && github.sha || inputs.release_ref }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_REF"
+          if [ "${{ github.event_name }}" = push ]; then
+            test "$RELEASE_VERSION" = "v$(python3 -c 'import json; print(json.load(open("ci/actionview.json"))["version"])')"
+          fi
+          ci/check
+          ci/package
+          ci/test-artifact build/release --source-sha "$RELEASE_REF" --forge-e2e \
+            --report build/artifact-test-gitea.json
+      - name: Retain candidate bundle in Gitea's v3 artifact service
+        uses: https://github.com/ChristopherHX/gitea-upload-artifact@62ac910c5d3dfa85c7cb2df15afe2e342b2407c2 # pinned Gitea upload fork (v3 API)
+        with:
+          name: actionview-release-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+          path: build/release/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Build and verify shared release manifest
+        env:
+          RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+          RELEASE_SOURCE_SHA: ${{ github.event_name == 'push' && github.sha || inputs.release_ref }}
+        run: |
+          RELEASE_VERSION="${RELEASE_VERSION#v}"
+          python3 ci/release-tools.py manifest \
+            --config "$RELEASE_CONFIG" \
+            --artifacts build/release \
+            --version "$RELEASE_VERSION" \
+            --commit "$RELEASE_SOURCE_SHA" \
+            --output build/release-manifest.json
+          python3 ci/release-tools.py verify \
+            --manifest build/release-manifest.json \
+            --artifacts build/release
+      - name: Ensure release through the canonical Gitea adapter
+        if: ${{ github.event_name == 'push' || inputs.publish == true }}
+        env:
+          GITEA_RELEASE_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          GITEA_API_URL: ${{ gitea.server_url }}
+          GITEA_REPOSITORY: ${{ gitea.repository }}
+        run: |
+          python3 ci/release-tools.py ensure-release \
+            --forge gitea \
+            --repository "$GITEA_REPOSITORY" \
+            --api-url "$GITEA_API_URL/api/v1" \
+            --manifest build/release-manifest.json \
+            --artifacts build/release \
+            --receipt-output build/release-receipt.json

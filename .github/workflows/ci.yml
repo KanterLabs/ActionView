@@ -16,15 +16,16 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: homelab
+    timeout-minutes: 25
     container:
-      image: ubuntu:26.04
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
     steps:
       - name: Install toolchain
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             gjs nodejs npm libglib2.0-bin ca-certificates git
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Lint
         run: npx --yes eslint@10 .
       - name: Core tests (gjs)
@@ -42,8 +43,9 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: homelab-heavy
+    timeout-minutes: 25
     container:
-      image: ubuntu:26.04
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
     steps:
       - name: Install gnome-shell
         run: |
@@ -59,10 +61,10 @@ jobs:
           dbus-daemon --system --fork
           nohup python3 -m dbusmock --system --template logind >/tmp/logind.log 2>&1 &
           sleep 2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Smoke test
         run: tools/smoke.sh build/smoke
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         # Screenshots are for debugging a failure; don't spend org artifact quota on green runs.
         if: failure()
         continue-on-error: true

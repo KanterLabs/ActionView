@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Build the exact ActionView release ZIP and its integrity evidence."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from release_lib import (
+    ARTIFACT_NAME,
+    CHECKSUM_NAME,
+    MANIFEST_NAME,
+    ReleaseError,
+    env_version,
+    json_dump,
+    load_config,
+    sha256,
+    source_dirty,
+    source_revision,
+    validate_metadata,
+    validate_zip,
+)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("build/release"),
+        help="directory for the ZIP, checksum, and manifest (default: build/release)",
+    )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="allow a local dirty tree; release CI always rejects dirty sources",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    root = Path(__file__).resolve().parent.parent
+    output_dir = (root / args.output_dir).resolve() if not args.output_dir.is_absolute() else args.output_dir
+    try:
+        config = load_config(root)
+        validate_metadata(root, config)
+        dirty = source_dirty(root)
+        if dirty and not args.allow_dirty:
+            raise ReleaseError(
+                "source tree is dirty; commit the candidate or pass --allow-dirty for local inspection"
+            )
+        requested_version = env_version()
+        if requested_version and requested_version != config["version"]:
+            raise ReleaseError(
+                f"release version {requested_version!r} does not match ci/release.json {config['version']!r}"
+            )
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # Artifact tests normally write evidence beside the downloaded bundle.
+        # Clear only those generated reports so a local re-package cannot make
+        # the shared manifest inventory fail because of stale evidence.
+        for stale_report in output_dir.glob("artifact-test-*.json"):
+            stale_report.unlink()
+        subprocess.run(
+            ["make", "pack", f"BUILD={output_dir}"],
+            cwd=root,
+            check=True,
+        )
+        zip_path = output_dir / ARTIFACT_NAME
+        validate_zip(zip_path, root, config)
+        digest = sha256(zip_path)
+        revision = source_revision(root)
+        manifest = {
+            "schema_version": 1,
+            "product": config["product"],
+            "artifact": ARTIFACT_NAME,
+            "kind": config["artifact"]["kind"],
+            "version": config["version"],
+            "gnome_version": config["gnome_version"],
+            "source_sha": revision,
+            "source_dirty": dirty,
+            "size": zip_path.stat().st_size,
+            "sha256": digest,
+            "test_images": {
+                target["id"]: target.get("image") or target.get("harness")
+                for target in config["targets"]
+            },
+        }
+        json_dump(output_dir / MANIFEST_NAME, manifest)
+        (output_dir / CHECKSUM_NAME).write_text(
+            f"{digest}  {ARTIFACT_NAME}\n", encoding="utf-8"
+        )
+        # Keep the conventional per-file checksum available to release
+        # consumers that do not understand the bundle manifest yet.
+        (output_dir / f"{ARTIFACT_NAME}.sha256").write_text(
+            f"{digest}  {ARTIFACT_NAME}\n", encoding="utf-8"
+        )
+        print(f"package: {zip_path}")
+        print(f"package: sha256 {digest}")
+        print(f"package: source {revision}{' (dirty, local only)' if dirty else ''}")
+        return 0
+    except (ReleaseError, OSError, subprocess.CalledProcessError) as exc:
+        print(f"ci/package: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
