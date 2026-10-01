@@ -4,6 +4,8 @@
 # screenshot each scenario, cycle enable/disable, and fail on JS errors.
 #
 # Usage: tools/smoke.sh [out-dir]
+# Set ACTIONVIEW_SMOKE_ZIP to install a downloaded release ZIP instead of
+# repacking the source tree (the artifact-test hook uses this path).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="${1:-$root/build/smoke}"
@@ -20,8 +22,14 @@ export HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_DATA_HOME="$tmp/data" 
 export XDG_RUNTIME_DIR="$tmp/run" && mkdir -p "$HOME" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
 ext_dir="$XDG_DATA_HOME/gnome-shell/extensions"
 mkdir -p "$ext_dir"
-# Install the packed zip (what ships), not the source tree.
-gnome-extensions pack --force --out-dir="$tmp" --extra-source=lib --extra-source=icons "$root/$uuid" >/dev/null
+# Install the packed zip (what ships), not the source tree. Artifact tests set
+# ACTIONVIEW_SMOKE_ZIP so this path exercises the exact downloaded bytes.
+if [[ -n "${ACTIONVIEW_SMOKE_ZIP:-}" ]]; then
+  [[ -f "$ACTIONVIEW_SMOKE_ZIP" ]] || { echo "smoke: ACTIONVIEW_SMOKE_ZIP is missing: $ACTIONVIEW_SMOKE_ZIP" >&2; exit 1; }
+  cp "$ACTIONVIEW_SMOKE_ZIP" "$tmp/$uuid.shell-extension.zip"
+else
+  gnome-extensions pack --force --out-dir="$tmp" --extra-source=lib --extra-source=icons "$root/$uuid" >/dev/null
+fi
 gnome-extensions install --force "$tmp/$uuid.shell-extension.zip"
 cp -r "$root/tools/smoke/actionview-smoke@kanterlabs.dev" "$ext_dir/"
 

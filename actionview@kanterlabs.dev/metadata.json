@@ -3,6 +3,7 @@
   "name": "ActionView",
   "description": "KanterLabs Forge CI status in the top bar: running and queued homelab jobs, capacity, trends, and notifications for failures, long queues and alerts.",
   "shell-version": ["48", "49", "50"],
+  "version": 1,
   "settings-schema": "org.gnome.shell.extensions.actionview",
   "url": "https://github.com/KanterLabs/ActionView",
   "version-name": "0.1.0"

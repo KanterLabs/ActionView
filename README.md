@@ -203,6 +203,36 @@ make smoke    # real headless gnome-shell end-to-end (see below)
 make pack     # build/actionview@kanterlabs.dev.shell-extension.zip
 ```
 
+### Release candidate packaging
+
+The release candidate is `v0.1.0`. The semantic tag and `version-name` in
+`metadata.json` are the user-facing release identity. GNOME also carries an
+integer `version` for extension update ordering; the initial candidate uses
+`1`, and that integer must increase on every later release even when the
+semantic version changes in a different way. Keep both values aligned through
+[`ci/actionview.json`](ci/actionview.json); the shared release asset manifest
+is [`ci/release.json`](ci/release.json). Do not use the GNOME integer as the tag.
+
+The local release commands build and test the exact downloaded ZIP:
+
+```sh
+ci/check                         # config, lint, core tests, schema
+ci/package --allow-dirty         # ZIP + artifact-manifest.json + SHA256SUMS
+ci/test-artifact build/release --allow-dirty --forge-e2e
+```
+
+Release CI rejects a dirty source tree, records the canonical source revision
+and SHA-256, checks the archive contents and metadata, installs the downloaded
+ZIP into a clean temporary GNOME extension directory, and retains an artifact
+test report. The Ubuntu 26.04/GNOME 50 smoke hook and Fedora Workstation
+43/GNOME 49.9 VM hook are separate heavy-tier gates; the Fedora harness is
+provided by the infrastructure release owner.
+
+ActionView requires a reachable compatible Forge backend. The public-safe
+source-path reference, `/api/operations` contract, and disposable verification
+endpoint are documented in [`docs/forge-backend.md`](docs/forge-backend.md).
+No private production endpoint is embedded in the extension or release jobs.
+
 `make smoke` starts a **real gnome-shell 50** in a headless Wayland session
 with a throwaway `HOME`, installs the packed zip, and has a test-only driver
 extension walk through 9 scenarios: idle, running, queued, failure,

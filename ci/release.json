@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "project": "ActionView",
+  "repository": "KanterLabs/ActionView",
+  "tag_format": "v{version}",
+  "protected_assets": ["SHA256SUMS"],
+  "targets": [
+    {
+      "target": "extension-zip",
+      "path": "actionview@kanterlabs.dev.shell-extension.zip",
+      "name": "actionview@kanterlabs.dev.shell-extension.zip"
+    },
+    {
+      "target": "artifact-manifest",
+      "path": "artifact-manifest.json",
+      "name": "artifact-manifest.json"
+    },
+    {
+      "target": "checksums",
+      "path": "SHA256SUMS",
+      "name": "SHA256SUMS"
+    },
+    {
+      "target": "extension-checksum",
+      "path": "actionview@kanterlabs.dev.shell-extension.zip.sha256",
+      "name": "actionview@kanterlabs.dev.shell-extension.zip.sha256"
+    }
+  ]
+}

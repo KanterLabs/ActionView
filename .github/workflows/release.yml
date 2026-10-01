@@ -1,0 +1,368 @@
+name: Release candidate
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Exact commit SHA to package (tags supply their own immutable ref)
+        required: true
+        type: string
+      version:
+        description: Semantic version; must match ci/release.json
+        required: true
+        default: 0.1.0
+        type: string
+      publish:
+        description: Publish the verified bundle through the canonical adapter
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Release jobs never cancel one another. The source revision and version are
+# checked in the plan and gate jobs; this key only prevents two attempts from
+# racing while the shared publisher handles its durable idempotency.
+concurrency:
+  group: actionview-release-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_CONFIG: ci/release.json
+
+jobs:
+  plan:
+    name: Plan exact release source
+    # Release jobs keep the self-hosted fork guard even though this workflow
+    # is tag/manual only; it prevents a future pull_request trigger from
+    # executing untrusted fork code on homelab runners.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: homelab
+    timeout-minutes: 25
+    container:
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      version: ${{ steps.identity.outputs.version }}
+      publish: ${{ steps.identity.outputs.publish }}
+    steps:
+      - name: Install plan tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git python3
+      - name: Checkout exact release revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || inputs.release_ref }}
+          fetch-depth: 0
+      - name: Validate source, tag, and configuration
+        id: identity
+        env:
+          RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+          RELEASE_REF: ${{ github.event_name == 'push' && github.sha || inputs.release_ref }}
+          PUBLISH_REQUESTED: ${{ github.event_name == 'push' && 'true' || inputs.publish }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_REF"
+          if [ "${{ github.event_name }}" = push ]; then
+            test "$RELEASE_VERSION" = "v$(python3 -c 'import json; print(json.load(open("ci/actionview.json"))["version"])')"
+          fi
+          ci/check --config-only
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$(python3 -c 'import json; print(json.load(open("ci/actionview.json"))["version"])')" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH_REQUESTED" >> "$GITHUB_OUTPUT"
+
+  package:
+    name: Package exact source
+    needs: plan
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: homelab
+    timeout-minutes: 25
+    container:
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    steps:
+      - name: Install package tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git python3 gnome-shell libglib2.0-bin
+      - name: Checkout planned revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+          fetch-depth: 0
+      - name: Package and record source identity
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: ci/package
+      - name: Upload immutable candidate bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: actionview-release-${{ needs.plan.outputs.version }}
+          path: build/release/
+          if-no-files-found: error
+          retention-days: 7
+
+  artifact-test-ubuntu:
+    name: Downloaded ZIP test (Ubuntu 26.04)
+    needs: [plan, package]
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: homelab-heavy
+    timeout-minutes: 25
+    container:
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    steps:
+      - name: Install artifact test tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git python3 gnome-shell gjs dbus dbus-daemon libglib2.0-bin
+      - name: Checkout planned revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+          fetch-depth: 0
+      - name: Download candidate bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: actionview-release-${{ needs.plan.outputs.version }}
+          path: build/downloaded
+      - name: Install downloaded ZIP and probe Forge contract
+        run: ci/test-artifact build/downloaded --platform ubuntu --forge-e2e
+      - name: Upload artifact evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: actionview-artifact-test-ubuntu-${{ needs.plan.outputs.version }}
+          path: build/downloaded/artifact-test-ubuntu.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The VM harness is supplied by the infrastructure release owner. This
+  # adapter intentionally has no container image, sudo package installation,
+  # or credentials: the homelab-heavy runner hands the downloaded ZIP to the
+  # parent-supplied Fedora 43/GNOME 49.9 VM harness.
+  artifact-test-fedora:
+    name: Downloaded ZIP hook (Fedora 43 GNOME 49.9)
+    needs: [plan, package]
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: homelab-heavy
+    timeout-minutes: 25
+    steps:
+      - name: Install artifact test tools
+        run: |
+          command -v git
+          command -v python3
+      - name: Checkout planned revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+          fetch-depth: 0
+      - name: Download candidate bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: actionview-release-${{ needs.plan.outputs.version }}
+          path: build/downloaded
+      - name: Install and smoke test downloaded ZIP through VM harness
+        env:
+          ACTIONVIEW_FEDORA_GNOME_HARNESS: ${{ vars.ACTIONVIEW_FEDORA_GNOME_HARNESS_COMMAND }}
+        run: ci/test-artifact build/downloaded --platform fedora --smoke
+      - name: Upload artifact evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: actionview-artifact-test-fedora-${{ needs.plan.outputs.version }}
+          path: build/downloaded/artifact-test-fedora.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Full GNOME Shell 50 smoke is deliberately an explicit parent-scheduled
+  # hook. The regular artifact test above remains lightweight and always checks
+  # the downloaded ZIP, manifest, checksum, install, and schema.
+  artifact-smoke-ubuntu:
+    name: Headless GNOME smoke hook (Ubuntu 26.04)
+    needs: [plan, package]
+    if: >-
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository) &&
+      vars.ACTIONVIEW_UBUNTU_GNOME_SMOKE == 'ready'
+    runs-on: homelab-heavy
+    timeout-minutes: 25
+    container:
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    steps:
+      - name: Install GNOME smoke tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git python3 python3-dbusmock gjs gnome-shell dbus dbus-daemon \
+            libglib2.0-bin adwaita-icon-theme
+      - name: Checkout planned revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+          fetch-depth: 0
+      - name: Download candidate bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: actionview-release-${{ needs.plan.outputs.version }}
+          path: build/downloaded
+      - name: Test downloaded ZIP in headless GNOME Shell
+        run: ci/test-artifact build/downloaded --platform ubuntu --smoke
+
+  ci-gate:
+    name: Candidate CI gate
+    needs: [plan, package, artifact-test-ubuntu, artifact-test-fedora, artifact-smoke-ubuntu]
+    if: >-
+      always() &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: homelab
+    timeout-minutes: 25
+    steps:
+      - name: Require every release target and hook
+        env:
+          PLAN: ${{ needs.plan.result }}
+          PACKAGE: ${{ needs.package.result }}
+          UBUNTU: ${{ needs.artifact-test-ubuntu.result }}
+          FEDORA: ${{ needs.artifact-test-fedora.result }}
+          UBUNTU_SMOKE: ${{ needs.artifact-smoke-ubuntu.result }}
+        run: |
+          test "$PLAN" = success
+          test "$PACKAGE" = success
+          test "$UBUNTU" = success
+          test "$FEDORA" = success || { echo 'Fedora 43/GNOME 49.9 harness is not ready or failed'; exit 1; }
+          test "$UBUNTU_SMOKE" = success || { echo 'Ubuntu GNOME smoke hook is not ready or failed'; exit 1; }
+
+  release-gate:
+    name: Release gate
+    needs: [plan, ci-gate]
+    if: >-
+      needs.ci-gate.result == 'success' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: homelab
+    timeout-minutes: 25
+    container:
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    steps:
+      - name: Install gate tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git python3
+      - name: Checkout planned revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+          fetch-depth: 0
+      - name: Download tested bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: actionview-release-${{ needs.plan.outputs.version }}
+          path: build/release
+      - name: Validate shared release receipt
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ needs.plan.outputs.source_sha }}"
+          ci/test-artifact build/release \
+            --source-sha "${{ needs.plan.outputs.source_sha }}" \
+            --report build/artifact-test-release.json
+          python3 ci/release-tools.py manifest \
+            --config "$RELEASE_CONFIG" \
+            --artifacts build/release \
+            --version "${{ needs.plan.outputs.version }}" \
+            --commit "${{ needs.plan.outputs.source_sha }}" \
+            --output build/release-manifest.json
+          python3 ci/release-tools.py verify \
+            --manifest build/release-manifest.json \
+            --artifacts build/release
+
+  canonical-verified:
+    name: Verify canonical forge before GitHub mirror
+    needs: [plan, release-gate]
+    if: >-
+      needs.release-gate.result == 'success' && needs.plan.outputs.publish == 'true' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: homelab
+    timeout-minutes: 25
+    container:
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    steps:
+      - name: Require the canonical release receipt when Gitea owns publication
+        env:
+          CANONICAL_FORGE: ${{ vars.ACTIONVIEW_CANONICAL_RELEASE_FORGE || 'github' }}
+          CANONICAL_VERIFIED: ${{ vars.ACTIONVIEW_CANONICAL_RELEASE_VERIFIED || 'false' }}
+        run: |
+          if [ "$CANONICAL_FORGE" = gitea ]; then
+            test "$CANONICAL_VERIFIED" = true
+          else
+            test "$CANONICAL_FORGE" = github
+          fi
+
+  publish:
+    name: Publish verified bundle
+    needs: [plan, release-gate, canonical-verified]
+    if: >-
+      needs.release-gate.result == 'success' && needs.plan.outputs.publish == 'true' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: homelab
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    container:
+      image: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    steps:
+      - name: Install publisher tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git python3
+      - name: Checkout planned revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+          fetch-depth: 0
+      - name: Download the exact tested bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: actionview-release-${{ needs.plan.outputs.version }}
+          path: build/release
+      - name: Build and verify the release manifest from the tested bytes
+        env:
+          RELEASE_SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          python3 ci/release-tools.py manifest \
+            --config "$RELEASE_CONFIG" \
+            --artifacts build/release \
+            --version "$RELEASE_VERSION" \
+            --commit "$RELEASE_SOURCE_SHA" \
+            --output build/release-manifest.json
+          python3 ci/release-tools.py verify \
+            --manifest build/release-manifest.json \
+            --artifacts build/release
+      - name: Ensure GitHub canonical release or mirror
+        env:
+          GH_RELEASE_TOKEN: ${{ github.token }}
+        run: |
+          python3 ci/release-tools.py ensure-release \
+            --forge github \
+            --repository "$GITHUB_REPOSITORY" \
+            --api-url "${GITHUB_API_URL:-https://api.github.com}" \
+            --manifest build/release-manifest.json \
+            --artifacts build/release \
+            --receipt-output build/release-receipt.json

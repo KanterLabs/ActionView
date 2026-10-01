@@ -25,6 +25,7 @@ pack:
 	mkdir -p $(BUILD)
 	gnome-extensions pack --force --out-dir=$(BUILD) \
 		--extra-source=lib --extra-source=icons $(UUID)
+	python3 ci/canonicalize_zip.py $(BUILD)/$(UUID).shell-extension.zip
 	@echo "→ $(BUILD)/$(UUID).shell-extension.zip"
 
 ## Install for the current user. Log out/in (Wayland) then: gnome-extensions enable $(UUID)
