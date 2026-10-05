@@ -10,6 +10,7 @@ import {computeBadge} from '../actionview@kanterlabs.dev/lib/core/badge.js';
 import {initialConnection, nextConnection, backoffSeconds} from '../actionview@kanterlabs.dev/lib/core/connection.js';
 import {planNotifications, rateLimit} from '../actionview@kanterlabs.dev/lib/core/notifications.js';
 import {duration, shortRunner, bytes, cores} from '../actionview@kanterlabs.dev/lib/core/format.js';
+import {normalizeBaseUrl} from '../actionview@kanterlabs.dev/lib/core/url.js';
 
 const isNode = typeof globalThis.process?.versions?.node === 'string';
 let readText;
@@ -335,6 +336,20 @@ test('format helpers', () => {
     eq(cores(60), '0.06 cores');
     eq(shortRunner('something-else'), 'something-else');
     eq(shortRunner(''), 'assigning…');
+});
+
+test('url: base URL normalized or rejected', () => {
+    const url = text => normalizeBaseUrl(text).url;
+    const error = text => normalizeBaseUrl(text).error;
+    eq(url('  http://forge.example:8090/  '), 'http://forge.example:8090');
+    eq(url('https://forge.example/api/operations'), 'https://forge.example');
+    eq(url('http://forge.example:8090/healthz'), 'http://forge.example:8090');
+    eq(url('https://example.com/forge/'), 'https://example.com/forge', 'a path prefix is kept');
+    eq(normalizeBaseUrl(''), {url: '', error: null}, 'empty means not set');
+    assert(error('forge.example:8090'), 'scheme required');
+    assert(error('ftp://forge.example'), 'only http(s)');
+    assert(error('http://'), 'host required');
+    assert(error('http://forge example'), 'no spaces');
 });
 
 // ── runner ───────────────────────────────────────────────────────────────────

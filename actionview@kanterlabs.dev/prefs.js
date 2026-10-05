@@ -6,6 +6,7 @@ import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/ex
 
 import {ForgeClient} from './lib/client.js';
 import {SUPPORTED_SCHEMA} from './lib/core/normalize.js';
+import {normalizeBaseUrl} from './lib/core/url.js';
 
 function switchRow(settings, key, title, subtitle = '') {
     const row = new Adw.SwitchRow({title, subtitle});
@@ -23,25 +24,44 @@ function spinRow(settings, key, title, lower, upper, subtitle = '') {
     return row;
 }
 
-function entryRow(settings, key, title) {
+/** URL entry: normalizes on apply; an invalid URL is not saved and shows a toast. */
+function urlRow(settings, key, title, window) {
     const row = new Adw.EntryRow({title, show_apply_button: true, text: settings.get_string(key)});
-    row.connect('apply', () => settings.set_string(key, row.text.trim()));
+    row.connect('apply', () => applyUrl(settings, key, row, window));
     return row;
+}
+
+/** @returns {string|null} the saved URL, or null when the text is invalid */
+function applyUrl(settings, key, row, window) {
+    const {url, error} = normalizeBaseUrl(row.text);
+    if (error) {
+        row.add_css_class('error');
+        window.add_toast(new Adw.Toast({title: error}));
+        return null;
+    }
+    row.remove_css_class('error');
+    if (row.text !== url)
+        row.text = url;
+    if (settings.get_string(key) !== url)
+        settings.set_string(key, url);
+    return url;
 }
 
 export default class ActionViewPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
         const client = new ForgeClient({timeoutSeconds: 5});
+        const pending = {cancellable: null};
         window.connect('close-request', () => {
+            pending.cancellable?.cancel();
             client.destroy();
             return false;
         });
-        window.add(this._generalPage(settings, client));
+        window.add(this._generalPage(settings, client, pending, window));
         window.add(this._notificationsPage(settings));
     }
 
-    _generalPage(settings, client) {
+    _generalPage(settings, client, pending, window) {
         const page = new Adw.PreferencesPage({title: 'General', icon_name: 'network-server-symbolic'});
 
         const connection = new Adw.PreferencesGroup({
@@ -49,15 +69,28 @@ export default class ActionViewPreferences extends ExtensionPreferences {
             description: 'Forge must accept connections from this machine. Over Tailscale with a ' +
                 'subnet route, run "sudo tailscale set --accept-routes" once.',
         });
-        connection.add(entryRow(settings, 'base-url', 'Base URL'));
-        connection.add(entryRow(settings, 'dashboard-url', 'Dashboard URL (optional)'));
+        const baseRow = urlRow(settings, 'base-url', 'Base URL', window);
+        connection.add(baseRow);
+        connection.add(urlRow(settings, 'dashboard-url', 'Dashboard URL (optional)', window));
 
         const test = new Adw.ActionRow({title: 'Test connection', subtitle: 'Not tested'});
         const button = new Gtk.Button({label: 'Test', valign: Gtk.Align.CENTER});
         button.connect('clicked', async () => {
+            // Test what is in the box, not a previously saved value: apply it first.
+            const url = applyUrl(settings, 'base-url', baseRow, window);
+            if (url === null) {
+                test.subtitle = 'Failed: invalid URL';
+                return;
+            }
+            const cancellable = new Gio.Cancellable();
+            pending.cancellable = cancellable;
             button.sensitive = false;
             test.subtitle = 'Testing…';
-            test.subtitle = await testConnection(client, settings.get_string('base-url'));
+            const result = await testConnection(client, url, cancellable);
+            if (cancellable.is_cancelled())
+                return; // window closed mid-test: its widgets are gone
+            pending.cancellable = null;
+            test.subtitle = result;
             button.sensitive = true;
         });
         test.add_suffix(button);
@@ -132,15 +165,17 @@ export default class ActionViewPreferences extends ExtensionPreferences {
     }
 }
 
-async function testConnection(client, baseUrl) {
+async function testConnection(client, baseUrl, cancellable) {
     try {
-        const {json} = await client.getJson(baseUrl, '/api/operations');
+        const {json} = await client.getJson(baseUrl, '/api/operations', cancellable);
         const version = json?.schema_version;
         const served = json?.served_at ? GLib.DateTime.new_from_iso8601(json.served_at, null)?.to_local()
             .format('%H:%M:%S') : '?';
         const note = version === SUPPORTED_SCHEMA ? '' : ` (ActionView expects v${SUPPORTED_SCHEMA})`;
         return `OK · schema v${version ?? '?'}${note} · served ${served}`;
     } catch (error) {
+        if (error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+            return null;
         return `Failed: ${error.message}`;
     }
 }
