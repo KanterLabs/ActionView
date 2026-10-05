@@ -136,7 +136,7 @@ test('diff: job start then run failure', () => {
     const fail = diff(start.state, view('concluded-failure'), nowOf(view('concluded-failure')));
     eq(types(fail.events), ['run.concluded']);
     assert(fail.events[0].failed);
-    eq(fail.state.unackedFailures, ['46000000001']);
+    eq(fail.state.unackedFailures, [{id: '46000000001', repo: 'web-app'}]);
     eq(fail.state.activeRuns, [], 'concluded run no longer tracked as active');
 });
 
@@ -210,6 +210,22 @@ test('diff: persisted state survives restore; old state re-baselines', () => {
     eq(restoreState(null, 0).baselined, false);
 });
 
+test('diff: corrupt persisted fields fall back instead of throwing', () => {
+    const v = view('base');
+    const now = nowOf(v);
+    const restored = restoreState({version: 2, savedAt: now, baselined: true, seenRuns: null,
+        alerts: 'x', activeRuns: [1, 2], sourceBad: {github: 'two'}, unackedFailures: [null, {id: 7}]}, now);
+    assert(restored.baselined, 'good fields are kept');
+    eq([restored.seenRuns, restored.alerts, restored.activeRuns, restored.sourceBad, restored.unackedFailures],
+        [{}, [], [], {}, []]);
+    diff(restored, v, now);
+});
+
+test('diff: version 1 state migrates failures', () => {
+    const v1 = {version: 1, savedAt: 0, baselined: true, unackedFailures: ['46000000001']};
+    eq(restoreState(v1, 1000).unackedFailures, [{id: '46000000001', repo: ''}]);
+});
+
 test('diff: acknowledge clears failures', () => {
     const t = transition('base', 'concluded-failure');
     eq(acknowledgeFailures(t.state).unackedFailures, []);
@@ -263,6 +279,21 @@ test('badge: muted repos drop out of counts', () => {
     const b = computeBadge({view: t.view, state: t.state, conn: initialConnection(),
         now: nowOf(t.view), mutedRepos: ['web-app']});
     eq(b.level, 'idle');
+});
+
+test('badge: muted repo failure does not turn the badge red', () => {
+    const t = transition('base', 'concluded-failure');
+    const b = computeBadge({view: t.view, state: t.state, conn: initialConnection(),
+        now: nowOf(t.view), mutedRepos: ['web-app']});
+    eq(b.level, 'idle');
+});
+
+test('badge: critical summary names the critical alert', () => {
+    const t = transition('base', 'alert');
+    const reordered = {...t.view, alerts: [...t.view.alerts].reverse()};
+    const b = computeBadge({view: reordered, state: t.state, conn: initialConnection(), now: nowOf(reordered)});
+    eq(b.level, 'critical');
+    eq(b.summary, 'node forge-host is NotReady');
 });
 
 // ── notifications ────────────────────────────────────────────────────────────

@@ -46,10 +46,11 @@ export function computeBadge({view, state, conn, now, mutedRepos = []}) {
         };
     }
 
-    if (view.alerts.some(a => a.level === 'critical'))
-        return {level: 'critical', label: counts || '!', summary: view.alerts[0].message};
+    const critical = view.alerts.find(a => a.level === 'critical');
+    if (critical)
+        return {level: 'critical', label: counts || '!', summary: critical.message};
 
-    const failures = state.unackedFailures.length;
+    const failures = state.unackedFailures.filter(f => !muted.has(f.repo)).length;
     if (failures) {
         return {
             level: 'failure',

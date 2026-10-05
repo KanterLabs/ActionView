@@ -6,7 +6,7 @@
 
 import {FAILURE_CONCLUSIONS, BAD_SOURCE_STATES} from './normalize.js';
 
-export const STATE_VERSION = 1;
+export const STATE_VERSION = 2;
 const SEEN_RUNS_MAX = 300;
 // A persisted state older than this is discarded and the next poll re-baselines
 // (no replay of a whole weekend of runs after a long suspend).
@@ -25,17 +25,46 @@ export function initialState() {
         queuedNotified: [],
         alerts: [], // normalized alert keys currently raised
         sourceBad: {}, // source name → consecutive bad polls
-        unackedFailures: [], // run ids with an unacknowledged failure (drives the red badge)
+        unackedFailures: [], // {id, repo} of unacknowledged failures (drives the red badge)
     };
 }
 
-/** Accept persisted state only if it is ours and recent enough. */
+const isStrings = v => Array.isArray(v) && v.every(x => typeof x === 'string');
+const isNumberMap = v => v !== null && typeof v === 'object' && !Array.isArray(v) &&
+    Object.values(v).every(Number.isFinite);
+
+// Version 1 stored bare run ids; the repo is unknown, so mutes can't hide those.
+function restoreFailures(v) {
+    if (!Array.isArray(v))
+        return [];
+    return v.map(f => (typeof f === 'string' ? {id: f, repo: ''} : f))
+        .filter(f => f && typeof f.id === 'string' && typeof f.repo === 'string')
+        .map(f => ({id: f.id, repo: f.repo}));
+}
+
+/**
+ * Accept persisted state only if it is ours and recent enough. Each field is
+ * checked on its own: a corrupt field falls back to its initial value instead
+ * of throwing later inside diff().
+ */
 export function restoreState(raw, now) {
-    if (!raw || typeof raw !== 'object' || raw.version !== STATE_VERSION)
+    if (!raw || typeof raw !== 'object' || (raw.version !== STATE_VERSION && raw.version !== 1))
         return initialState();
     if (!Number.isFinite(raw.savedAt) || now - raw.savedAt > STATE_MAX_AGE_MS)
         return initialState();
-    return {...initialState(), ...raw};
+    const state = initialState();
+    state.baselined = raw.baselined === true;
+    state.savedAt = raw.savedAt;
+    for (const key of ['activeRuns', 'runningKeys', 'queuedNotified', 'alerts']) {
+        if (isStrings(raw[key]))
+            state[key] = [...raw[key]];
+    }
+    for (const key of ['seenRuns', 'sourceBad']) {
+        if (isNumberMap(raw[key]))
+            state[key] = {...raw[key]};
+    }
+    state.unackedFailures = restoreFailures(raw.unackedFailures);
+    return state;
 }
 
 /** Alert messages embed live numbers ("memory at 81.3%"); key on the shape. */
@@ -90,7 +119,7 @@ export function diff(prev, view, now, options = {}) {
     // saw it active again since its last conclusion (re-runs keep their id).
     const seenRuns = {...prev.seenRuns};
     const activeRuns = new Set([...prev.activeRuns, ...view.activeRunIds]);
-    const unacked = new Set(prev.unackedFailures);
+    const unacked = new Map(prev.unackedFailures.map(f => [f.id, f.repo]));
     for (const run of view.recent) {
         if (run.status !== 'completed' || !run.conclusion)
             continue;
@@ -102,7 +131,7 @@ export function diff(prev, view, now, options = {}) {
             activeRuns.delete(run.id);
             const failed = FAILURE_CONCLUSIONS.has(run.conclusion);
             if (baselined && failed)
-                unacked.add(run.id);
+                unacked.set(run.id, run.repo);
             else if (!failed)
                 unacked.delete(run.id);
             emit({type: 'run.concluded', id: `${run.id}@${run.updatedAt}`, repo: run.repo,
@@ -152,7 +181,7 @@ export function diff(prev, view, now, options = {}) {
             queuedNotified: [...queuedNotified].filter(k => stillQueued.has(k)),
             alerts: [...alerts.keys()],
             sourceBad,
-            unackedFailures: [...unacked],
+            unackedFailures: [...unacked].map(([id, repo]) => ({id, repo})),
         },
         events,
     };
