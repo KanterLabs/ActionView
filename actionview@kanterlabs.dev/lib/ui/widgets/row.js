@@ -58,7 +58,7 @@ export function headingItem() {
     return {item, label, detail};
 }
 
-/** Muted placeholder line ("No homelab jobs running"). */
+/** Muted placeholder line ("No jobs running"). */
 export function placeholderItem(text) {
     const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
     item.label = new St.Label({text, style_class: 'actionview-placeholder'});

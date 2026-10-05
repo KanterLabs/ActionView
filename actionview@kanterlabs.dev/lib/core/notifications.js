@@ -75,7 +75,7 @@ export function planNotifications(events, prefs) {
                 out.push({
                     key: `queued:${e.id}`,
                     title: `${e.repo}: ${e.job.job} queued for ${duration(e.waitedMs / 1000)}`,
-                    body: 'No homelab runner has picked it up yet.',
+                    body: `No ${e.job.runnerTier ? `${e.job.runnerTier} ` : ''}runner has picked it up yet.`,
                     urgency: 'normal',
                     url: e.job.url,
                     repo: e.repo,

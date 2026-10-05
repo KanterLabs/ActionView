@@ -39,8 +39,9 @@ class ActionViewIndicator extends PanelMenu.Button {
         this.add_child(box);
 
         this.menu.box.add_style_class_name('actionview-menu');
+        this._header = new HeaderSection({onRefresh, onOpenDashboard, onOpenPrefs});
         this._sections = [
-            new HeaderSection({onRefresh, onOpenDashboard, onOpenPrefs}),
+            this._header,
             new BannerSection(),
             new JobsSection(),
             new TrendsSection(),
@@ -79,9 +80,10 @@ class ActionViewIndicator extends PanelMenu.Button {
 
     _tick() {
         const now = Date.now();
-        this._sections[0].update(this._store, now);
-        this._sections[2].tick(now);
-        this._sections[5].tick(now);
+        // "Updated 3 s ago" needs the store; live timers only need the clock.
+        this._header.update(this._store, now);
+        for (const section of this._sections)
+            section.tick?.(now);
     }
 
     _stopTick() {

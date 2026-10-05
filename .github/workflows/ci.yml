@@ -31,6 +31,8 @@ jobs:
         run: gjs -m tests/core.test.js
       - name: Core tests (node)
         run: node tests/core.test.js
+      - name: Poller tests (gjs)
+        run: gjs -m tests/poller.test.js
       - name: Schema compiles
         run: glib-compile-schemas --strict --dry-run actionview@kanterlabs.dev/schemas
 

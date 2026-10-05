@@ -11,6 +11,7 @@ import {initialConnection, nextConnection, backoffSeconds} from '../actionview@k
 import {planNotifications, rateLimit} from '../actionview@kanterlabs.dev/lib/core/notifications.js';
 import {duration, shortRunner, bytes, cores} from '../actionview@kanterlabs.dev/lib/core/format.js';
 import {normalizeBaseUrl} from '../actionview@kanterlabs.dev/lib/core/url.js';
+import {applyPoll} from '../actionview@kanterlabs.dev/lib/core/apply.js';
 
 const isNode = typeof globalThis.process?.versions?.node === 'string';
 let readText;
@@ -274,6 +275,44 @@ test('connection: backoff schedule', () => {
     eq([0, 1, 2, 3, 4, 9].map(f => backoffSeconds(f, 5)), [null, 5, 10, 20, 60, 60]);
 });
 
+// ── applyPoll (what Store does with each poll) ───────────────────────────────
+
+function polled(name, now) {
+    const model = {view: null, state: initialState(), conn: initialConnection()};
+    return applyPoll(model, {ok: true, notModified: false, json: fixture(name)}, now);
+}
+
+test('apply: a 200 with garbage is a failure and keeps lastGoodAt', () => {
+    const good = polled('base', 1000);
+    eq(good.conn.lastGoodAt, 1000);
+    const bad = applyPoll(good, {ok: true, notModified: false, json: {hello: 'world'}}, 2000);
+    eq(bad.conn.lastGoodAt, 1000);
+    eq(bad.conn.failures, 1);
+    eq(bad.conn.lastError, 'unexpected response shape');
+    assert(bad.view === good.view, 'last good view stays on screen');
+});
+
+test('apply: 304 keeps the view and refreshes the connection', () => {
+    const good = polled('base', 1000);
+    const same = applyPoll(good, {ok: true, notModified: true, json: null}, 5000);
+    assert(same.view === good.view && same.state === good.state);
+    eq(same.conn.lastGoodAt, 5000);
+    eq(same.events, []);
+});
+
+test('apply: failures keep the view; recovery fires once', () => {
+    let model = polled('base', 1000);
+    const events = [];
+    for (let i = 1; i <= 4; i++) {
+        model = applyPoll(model, {ok: false, error: 'connection refused'}, 1000 + i);
+        events.push(...model.events);
+    }
+    assert(model.view !== null);
+    eq(types(events), ['forge.unreachable']);
+    model = applyPoll(model, {ok: true, notModified: false, json: fixture('base')}, 2000);
+    eq(types(model.events), ['forge.recovered']);
+});
+
 // ── badge ────────────────────────────────────────────────────────────────────
 
 function badgeFor(first, second, conn = {...initialConnection(), lastGoodAt: 0}) {
@@ -347,6 +386,15 @@ test('notifications: muted repo silenced, matrix coalesced', () => {
     const [n] = planNotifications(burst, PREFS);
     eq(n.title, 'web-app: 6 runs failed');
     eq(n.body.split('\n').length, 5, '4 lines + "and 2 more"');
+});
+
+test('notifications: queued body names the runner tier', () => {
+    const [n] = planNotifications(transition('base', 'queued').events, PREFS);
+    assert(n.key.startsWith('queued:'));
+    assert(/^No [\w-]+ runner has picked it up yet\.$/.test(n.body), n.body);
+    const e = transition('base', 'queued').events.find(x => x.type === 'job.queued_long');
+    const [blank] = planNotifications([{...e, job: {...e.job, runnerTier: ''}}], PREFS);
+    eq(blank.body, 'No runner has picked it up yet.');
 });
 
 test('notifications: rate limit lets high urgency through', () => {

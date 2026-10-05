@@ -21,7 +21,7 @@ export class JobsSection {
         this.section.addMenuItem(this._runningHeading.item);
         this._running = new PopupMenu.PopupMenuSection();
         this.section.addMenuItem(this._running);
-        this._empty = placeholderItem('No homelab jobs running');
+        this._empty = placeholderItem('No jobs running');
         this.section.addMenuItem(this._empty);
 
         this._queuedHeading = headingItem();
@@ -57,7 +57,7 @@ export class JobsSection {
 
         this._runningHeading.detail.text = running.length ? String(running.length) : '';
         this._empty.visible = running.length === 0;
-        this._empty.label.text = view ? 'No homelab jobs running' : 'Waiting for Forge…';
+        this._empty.label.text = view ? 'No jobs running' : 'Waiting for Forge…';
 
         const wait = view?.wait;
         this._queuedHeading.detail.text = wait?.p50 !== null && wait?.p50 !== undefined

@@ -4,10 +4,11 @@ BUILD := build
 
 .PHONY: test lint smoke check schemas pack install uninstall fixtures capture shots clean
 
-## Core unit tests (pure JS) under both runtimes
+## Core unit tests (pure JS) under both runtimes, plus the gjs-only poller tests
 test:
 	gjs -m tests/core.test.js
 	node tests/core.test.js
+	gjs -m tests/poller.test.js
 
 lint:
 	npx --yes eslint@10 .

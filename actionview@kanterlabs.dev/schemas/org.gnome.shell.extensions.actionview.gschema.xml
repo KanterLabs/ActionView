@@ -30,7 +30,7 @@
     </key>
     <key name="notify-start" type="b">
       <default>false</default>
-      <summary>Notify when a job starts on a homelab runner</summary>
+      <summary>Notify when a job starts on a runner</summary>
     </key>
     <key name="notify-queued" type="b">
       <default>true</default>

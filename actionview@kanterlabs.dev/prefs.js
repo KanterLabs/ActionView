@@ -123,7 +123,7 @@ export default class ActionViewPreferences extends ExtensionPreferences {
         const events = new Adw.PreferencesGroup({title: 'Notify when'});
         events.add(switchRow(settings, 'notify-failure', 'A run fails', 'Includes timeouts and startup failures'));
         events.add(switchRow(settings, 'notify-success', 'A run succeeds'));
-        events.add(switchRow(settings, 'notify-start', 'A job starts on a homelab runner'));
+        events.add(switchRow(settings, 'notify-start', 'A job starts'));
         events.add(switchRow(settings, 'notify-queued', 'A job waits too long for a runner'));
         events.add(spinRow(settings, 'queued-alert-minutes', 'Queue threshold (minutes)', 1, 120));
         events.add(switchRow(settings, 'notify-alerts', 'Forge raises an alert', 'Also stale data sources'));

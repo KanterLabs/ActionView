@@ -6,6 +6,19 @@ import Gio from 'gi://Gio';
 
 import {backoffSeconds} from './core/connection.js';
 
+/** Timers on the GLib main loop; tests substitute a fake. */
+export const glibScheduler = {
+    add(seconds, fn) {
+        return GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
+            fn();
+            return GLib.SOURCE_REMOVE;
+        });
+    },
+    remove(id) {
+        GLib.source_remove(id);
+    },
+};
+
 export class Poller {
     /**
      * @param {object} params
@@ -13,9 +26,11 @@ export class Poller {
      * @param {() => {active: number, idle: number}} params.intervals seconds
      * @param {() => boolean} params.isActive true → use the active interval
      * @param {() => number} params.failures consecutive failures so far
+     * @param {{add: (seconds: number, fn: () => void) => number, remove: (id: number) => void}} [params.scheduler]
      */
-    constructor({tick, intervals, isActive, failures}) {
+    constructor({tick, intervals, isActive, failures, scheduler = glibScheduler}) {
         this._tick = tick;
+        this._scheduler = scheduler;
         this._intervals = intervals;
         this._isActive = isActive;
         this._failures = failures;
@@ -86,16 +101,15 @@ export class Poller {
         const {active, idle} = this._intervals();
         const delay = backoffSeconds(this._failures(), active) ??
             (this._isActive() ? active : idle);
-        this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, Math.max(1, delay), () => {
+        this._timeoutId = this._scheduler.add(Math.max(1, delay), () => {
             this._timeoutId = 0;
             this._run();
-            return GLib.SOURCE_REMOVE;
         });
     }
 
     _clearTimeout() {
         if (this._timeoutId) {
-            GLib.source_remove(this._timeoutId);
+            this._scheduler.remove(this._timeoutId);
             this._timeoutId = 0;
         }
     }

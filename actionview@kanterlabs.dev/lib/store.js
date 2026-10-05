@@ -3,9 +3,9 @@
 
 import {EventEmitter} from 'resource:///org/gnome/shell/misc/signals.js';
 
-import {normalize} from './core/normalize.js';
-import {diff, restoreState, acknowledgeFailures} from './core/diff.js';
-import {initialConnection, nextConnection} from './core/connection.js';
+import {applyPoll} from './core/apply.js';
+import {restoreState, acknowledgeFailures} from './core/diff.js';
+import {initialConnection} from './core/connection.js';
 import {computeBadge} from './core/badge.js';
 import {loadState, saveState} from './persist.js';
 
@@ -33,33 +33,22 @@ export class Store extends EventEmitter {
 
     /** @param {{notModified: boolean, json: unknown}} result */
     applySuccess(result, now = Date.now()) {
-        // Validate before touching connection health: an HTTP 200 carrying
-        // garbage must not refresh lastGoodAt.
-        const view = result.notModified ? null : normalize(result.json);
-        if (!result.notModified && !view) {
-            this.applyFailure(new Error('unexpected response shape'), now);
-            return;
-        }
-
-        const connection = nextConnection(this.conn, {ok: true}, now);
-        this.conn = connection.conn;
-        const events = [...connection.events];
-        if (view) {
-            const next = diff(this.state, view, now, {
-                queuedAlertMs: this._settings.get_int('queued-alert-minutes') * 60 * 1000,
-            });
-            this.view = view;
-            this.state = next.state;
-            events.push(...next.events);
-        }
-        this._finish(events, now);
+        this._apply({ok: true, ...result}, now);
     }
 
     /** @param {{localOffline?: boolean}} options localOffline: this machine has no network */
     applyFailure(error, now = Date.now(), {localOffline = false} = {}) {
-        const connection = nextConnection(this.conn, {ok: false, error: error.message, localOffline}, now);
-        this.conn = connection.conn;
-        this._finish(connection.events, now);
+        this._apply({ok: false, error: error.message, localOffline}, now);
+    }
+
+    _apply(result, now) {
+        const next = applyPoll({view: this.view, state: this.state, conn: this.conn}, result, now, {
+            queuedAlertMs: this._settings.get_int('queued-alert-minutes') * 60 * 1000,
+        });
+        this.view = next.view;
+        this.state = next.state;
+        this.conn = next.conn;
+        this._finish(next.events, now);
     }
 
     /** Opening the menu counts as "I've seen the failures". */
