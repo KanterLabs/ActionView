@@ -23,7 +23,11 @@ export class BannerSection {
             rows.push({key, title, subtitle, glyph: level === 'critical' ? '●' : '▲',
                 glyphClass: `actionview-level-${level}`});
 
-        if (conn.down || !view) {
+        if (conn.localOffline) {
+            add('offline', 'warning', conn.lastGoodAt === null
+                ? 'No network' : `No network · showing data from ${shortAge(now - conn.lastGoodAt)} ago`,
+            'ActionView polls again as soon as this machine is back online.');
+        } else if (conn.down || !view) {
             add('offline', 'critical', conn.lastGoodAt === null
                 ? 'Forge unreachable' : `Forge unreachable · last data ${shortAge(now - conn.lastGoodAt)} old`,
             conn.lastError ?? '');

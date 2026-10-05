@@ -5,6 +5,7 @@
 
 import Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as LoginManager from 'resource:///org/gnome/shell/misc/loginManager.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {ForgeClient} from './lib/client.js';
@@ -42,10 +43,25 @@ export default class ActionViewExtension extends Extension {
             'changed::panel-box', () => this._addIndicator(),
             this);
 
+        // Being offline is this machine's problem, not Forge's: don't count it
+        // against Forge, and poll as soon as the network or the machine is back.
+        this._network = Gio.NetworkMonitor.get_default();
+        this._network.connectObject('network-changed', (_monitor, available) => {
+            if (available)
+                this._poller?.pokeNow();
+        }, this);
+        LoginManager.getLoginManager().connectObject('prepare-for-sleep', (_manager, aboutToSuspend) => {
+            if (!aboutToSuspend)
+                this._poller?.pokeNow();
+        }, this);
+
         this._poller.start();
     }
 
     disable() {
+        LoginManager.getLoginManager().disconnectObject(this);
+        this._network.disconnectObject(this);
+        this._network = null;
         this._settings.disconnectObject(this);
         // Stop polling before destroying the indicator: destroying it closes an
         // open menu, whose handler asks the (stopped, still present) poller to reschedule.
@@ -72,7 +88,10 @@ export default class ActionViewExtension extends Extension {
         } catch (error) {
             if (error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
                 throw error;
-            this._store?.applyFailure(error);
+            // Only blame the local network when the request actually failed: a
+            // LAN-only machine without a default route can still reach Forge.
+            const localOffline = !this._network?.network_available;
+            this._store?.applyFailure(localOffline ? new Error('no network') : error, Date.now(), {localOffline});
             return;
         }
         this._store?.applySuccess(result);

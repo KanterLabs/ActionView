@@ -19,6 +19,10 @@ export function computeBadge({view, state, conn, now, mutedRepos = []}) {
     const counts = [running ? `▶ ${running}` : '', queued ? `⏳ ${queued}` : '']
         .filter(Boolean).join('  ');
 
+    if (conn.localOffline) {
+        // Still offline-level: the data on screen can't be vouched for.
+        return {level: 'offline', label: '', summary: 'No network: Forge data is paused'};
+    }
     if (!view || conn.down) {
         // Age of the last good data; under a minute it's noise.
         const age = conn.lastGoodAt === null || now - conn.lastGoodAt < 60 * 1000

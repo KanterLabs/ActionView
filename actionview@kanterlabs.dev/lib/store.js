@@ -55,8 +55,9 @@ export class Store extends EventEmitter {
         this._finish(events, now);
     }
 
-    applyFailure(error, now = Date.now()) {
-        const connection = nextConnection(this.conn, {ok: false, error: error.message}, now);
+    /** @param {{localOffline?: boolean}} options localOffline: this machine has no network */
+    applyFailure(error, now = Date.now(), {localOffline = false} = {}) {
+        const connection = nextConnection(this.conn, {ok: false, error: error.message, localOffline}, now);
         this.conn = connection.conn;
         this._finish(connection.events, now);
     }

@@ -249,6 +249,27 @@ test('connection: unreachable after 3 failures, recovered once', () => {
     eq(types(nextConnection(initialConnection(), {ok: true}, 0).events), []);
 });
 
+test('connection: no network is silent and gives Forge a fresh grace period', () => {
+    let conn = nextConnection(initialConnection(), {ok: true}, 0).conn;
+    conn = nextConnection(conn, {ok: false, error: 'timeout'}, 1).conn;
+    conn = nextConnection(conn, {ok: false, error: 'timeout'}, 2).conn;
+    const all = [];
+    for (let i = 3; i < 10; i++) {
+        const r = nextConnection(conn, {ok: false, error: 'no network', localOffline: true}, i);
+        conn = r.conn;
+        all.push(...r.events);
+    }
+    eq(types(all), [], 'a laptop going offline does not page anyone');
+    assert(conn.localOffline && !conn.down);
+    eq(conn.failures, 0);
+    const late = nextConnection(conn, {ok: false, error: 'timeout'}, 10);
+    eq(types(late.events), [], 'first real failure after the network returns is not "down" yet');
+    assert(!late.conn.localOffline);
+    const up = nextConnection(conn, {ok: true}, 11);
+    eq(types(up.events), [], 'nothing to recover from');
+    assert(!up.conn.localOffline);
+});
+
 test('connection: backoff schedule', () => {
     eq([0, 1, 2, 3, 4, 9].map(f => backoffSeconds(f, 5)), [null, 5, 10, 20, 60, 60]);
 });
@@ -273,6 +294,14 @@ test('badge: priorities', () => {
     eq(badgeFor('base', 'alert', down).level, 'offline', 'offline beats everything');
     eq(computeBadge({view: null, state: initialState(), conn: initialConnection(), now: 0}).level,
         'offline');
+});
+
+test('badge: no network is offline, never idle', () => {
+    const t = transition('base', 'base');
+    const conn = {...initialConnection(), lastGoodAt: 0, localOffline: true};
+    const b = computeBadge({view: t.view, state: t.state, conn, now: nowOf(t.view)});
+    eq(b.level, 'offline');
+    assert(b.summary.startsWith('No network'));
 });
 
 test('badge: muted repos drop out of counts', () => {

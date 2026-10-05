@@ -41,7 +41,7 @@ export class HeaderSection {
         const {badge, view, conn} = store;
         this._dot.style_class = `actionview-dot actionview-level-${badge.level}`;
         const parts = [];
-        if (conn.down || !view)
+        if (conn.down || conn.localOffline || !view)
             parts.push(badge.summary);
         else
             parts.push(`Updated ${ago(conn.lastGoodAt, now)}`);
