@@ -13,6 +13,7 @@ import {Poller} from './lib/poller.js';
 import {Store} from './lib/store.js';
 import {Notifier} from './lib/notifier.js';
 import {Indicator} from './lib/ui/indicator.js';
+import {SnoozeIndicator} from './lib/ui/snoozeToggle.js';
 import {openUri, dashboardUrl} from './lib/util.js';
 
 export default class ActionViewExtension extends Extension {
@@ -35,6 +36,8 @@ export default class ActionViewExtension extends Extension {
         });
 
         this._addIndicator();
+        this._snooze = new SnoozeIndicator({settings: this._settings, gicon: this._gicon});
+        Main.panel.statusArea.quickSettings.addExternalIndicator(this._snooze);
 
         this._settings.connectObject(
             'changed::base-url', () => this._poller.pokeNow(),
@@ -68,6 +71,8 @@ export default class ActionViewExtension extends Extension {
         this._poller.stop();
         this._indicator?.destroy();
         this._indicator = null;
+        this._snooze.destroy();
+        this._snooze = null;
         this._poller = null;
         this._store.persist();
         this._store.disconnectObject(this);

@@ -12,6 +12,7 @@ import {planNotifications, rateLimit} from '../actionview@kanterlabs.dev/lib/cor
 import {duration, shortRunner, bytes, cores} from '../actionview@kanterlabs.dev/lib/core/format.js';
 import {normalizeBaseUrl} from '../actionview@kanterlabs.dev/lib/core/url.js';
 import {applyPoll} from '../actionview@kanterlabs.dev/lib/core/apply.js';
+import {snoozeEnd, isSnoozed, snoozeLabel} from '../actionview@kanterlabs.dev/lib/core/snooze.js';
 
 const isNode = typeof globalThis.process?.versions?.node === 'string';
 let readText;
@@ -427,6 +428,21 @@ test('url: base URL normalized or rejected', () => {
     assert(error('ftp://forge.example'), 'only http(s)');
     assert(error('http://'), 'host required');
     assert(error('http://forge example'), 'no spaces');
+});
+
+test('snooze: end times, expiry and labels (local time)', () => {
+    const now = new Date(2026, 9, 5, 14, 20, 30).getTime();
+    eq(snoozeEnd('1h', now), Math.floor(now / 1000) + 3600);
+    eq(snoozeEnd('4h', now), Math.floor(now / 1000) + 4 * 3600);
+    const tomorrow = new Date(snoozeEnd('tomorrow', now) * 1000);
+    eq([tomorrow.getDate(), tomorrow.getHours(), tomorrow.getMinutes()], [6, 9, 0]);
+    assert(isSnoozed(snoozeEnd('1h', now), now));
+    assert(!isSnoozed(snoozeEnd('1h', now), now + 3600 * 1000), 'expires');
+    assert(!isSnoozed(0, now), '0 means not snoozed');
+    eq(snoozeLabel(snoozeEnd('1h', now), now), '15:20');
+    eq(snoozeLabel(snoozeEnd('tomorrow', now), now), 'tomorrow 09:00');
+    const later = new Date(2026, 9, 9, 9, 0).getTime() / 1000;
+    eq(snoozeLabel(later, now), 'Fri 09:00');
 });
 
 // ── runner ───────────────────────────────────────────────────────────────────

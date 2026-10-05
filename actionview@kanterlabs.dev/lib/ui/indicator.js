@@ -58,6 +58,7 @@ class ActionViewIndicator extends PanelMenu.Button {
         this.menu.connectObject('open-state-changed', (_menu, open) => this._onOpenChanged(open), this);
         store.connectObject('changed', () => this._render(), this);
         settings.connectObject('changed::panel-show-label', () => this._render(),
+            'changed::snooze-until', () => this._render(),
             'changed::muted-repos', () => {
                 store.recomputeBadge();
                 this._render();

@@ -90,7 +90,7 @@ expect = {
 bad = [f"{s['step']}: badge {s['badge']['level']} != {expect[s['step']]}"
        for s in r["scenarios"] if s["step"] in expect and s["badge"]["level"] != expect[s["step"]]]
 c = r["cycles"]
-if c["indicators"] != 1 or not c["statusAreaPresent"] or not c["haveView"] or (c["pollerSources"] or 0) > 1:
+if c["indicators"] != 1 or c.get("snoozeToggles") != 1 or not c["statusAreaPresent"] or not c["haveView"] or (c["pollerSources"] or 0) > 1:
     bad.append(f"enable/disable cycles: {c}")
 if bad:
     sys.exit("smoke: FAILED\n  " + "\n  ".join(bad))

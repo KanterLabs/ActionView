@@ -99,6 +99,8 @@ export default class SmokeDriver extends Extension {
         await screenshot(`${out}/prefs.png`);
         report.prefsScreenshot = `${out}/prefs.png`;
 
+        report.snooze = await this._checkSnooze(dir, live, out);
+
         // Leak check: enable/disable repeatedly, then make sure exactly one
         // indicator exists and the poller holds at most one pending source.
         for (let i = 0; i < CYCLES; i++) {
@@ -112,14 +114,65 @@ export default class SmokeDriver extends Extension {
         const indicators = Main.panel._rightBox.get_children()
             .concat(Main.panel._leftBox.get_children(), Main.panel._centerBox.get_children())
             .filter(c => c.get_first_child()?.constructor?.name?.includes('ActionViewIndicator')).length;
+        const snoozeToggles = Main.panel.statusArea.quickSettings.menu._grid.get_children()
+            .filter(c => c.constructor?.name?.includes('ActionViewSnoozeToggle')).length;
         report.cycles = {
             count: CYCLES,
             indicators,
+            snoozeToggles,
             statusAreaPresent: Boolean(Main.panel.statusArea[TARGET]),
             pollerSources: ext?._poller?.activeSources ?? null,
             haveView: Boolean(ext?._store?.view),
         };
         this._finish(report);
+    }
+
+    /** Quick Settings toggle exists; snoozed means no notifications but a live badge. */
+    async _checkSnooze(dir, live, out) {
+        const ext = this._target();
+        const toggle = ext._snooze.quickSettingsItems[0];
+        const check = (cond, what) => {
+            if (!cond)
+                throw new Error(`snooze: ${what}`);
+        };
+        check(toggle.get_parent() !== null, 'toggle is not in Quick Settings');
+        check(toggle.checked, 'notifications should start on');
+
+        let shown = 0;
+        const show = ext._notifier._show.bind(ext._notifier);
+        ext._notifier._show = n => {
+            shown++;
+            show(n);
+        };
+
+        toggle.emit('clicked', 1);
+        check(!toggle.checked && toggle.subtitle.startsWith('Until '), `click did not snooze (${toggle.subtitle})`);
+        Main.panel.statusArea.quickSettings.menu.open(false);
+        await sleep(800);
+        await screenshot(`${out}/quick-settings.png`);
+        Main.panel.statusArea.quickSettings.menu.close(false);
+
+        // A fresh failure while snoozed: counted in the badge, not notified. The
+        // failure scenario's run was already seen above, so give it a new id.
+        const payload = JSON.parse(new TextDecoder().decode(
+            GLib.file_get_contents(`${dir}/concluded-failure.json`)[1]));
+        payload.recent_runs.find(r => r.conclusion === 'failure').id = 'smoke-snoozed-failure';
+        GLib.file_set_contents(live, JSON.stringify(payload));
+        await this._poll();
+        const badge = ext._store.badge.level;
+        const whileSnoozed = shown;
+        check(badge === 'failure', `badge while snoozed is ${badge}`);
+        check(whileSnoozed === 0, `${whileSnoozed} notification(s) while snoozed`);
+
+        toggle.emit('clicked', 1);
+        check(toggle.checked && toggle.subtitle === 'On', 'click did not resume');
+        ext._notifier.handle([{type: 'forge.recovered', id: 'forge'}]);
+        check(shown === 1, 'notifications did not resume');
+
+        ext._notifier._show = show;
+        copy(`${dir}/base.json`, live);
+        await this._poll();
+        return {badgeWhileSnoozed: badge, notifiedWhileSnoozed: whileSnoozed, screenshot: `${out}/quick-settings.png`};
     }
 
     _target() {

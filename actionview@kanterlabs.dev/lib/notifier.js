@@ -4,6 +4,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 
 import {planNotifications, rateLimit} from './core/notifications.js';
+import {isSnoozed} from './core/snooze.js';
 import {openUri} from './util.js';
 
 const URGENCY = {
@@ -22,6 +23,9 @@ export class Notifier {
 
     handle(events) {
         const s = this._settings;
+        // Snoozed: nothing is lost (badge, unseen failures and the menu keep updating), just quiet.
+        if (isSnoozed(s.get_int64('snooze-until'), Date.now()))
+            return;
         const planned = planNotifications(events, {
             notifyFailure: s.get_boolean('notify-failure'),
             notifySuccess: s.get_boolean('notify-success'),

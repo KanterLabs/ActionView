@@ -3,6 +3,7 @@ import St from 'gi://St';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {ago} from '../../core/format.js';
+import {isSnoozed, snoozeLabel} from '../../core/snooze.js';
 
 function iconButton(iconName, accessibleName, callback) {
     const button = new St.Button({
@@ -49,6 +50,8 @@ export class HeaderSection {
             parts.push(view.host.hostname);
         if (!conn.down && conn.failures)
             parts.push(`retrying (${conn.lastError})`);
+        if (isSnoozed(store.snoozeUntil, now))
+            parts.push(`notifications snoozed until ${snoozeLabel(store.snoozeUntil, now)}`);
         this._status.text = parts.join(' · ');
     }
 }

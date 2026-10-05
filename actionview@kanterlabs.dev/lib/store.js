@@ -31,6 +31,11 @@ export class Store extends EventEmitter {
         return this._settings.get_strv('muted-repos');
     }
 
+    /** Snooze end in epoch seconds (0 = not snoozed). */
+    get snoozeUntil() {
+        return this._settings.get_int64('snooze-until');
+    }
+
     /** @param {{notModified: boolean, json: unknown}} result */
     applySuccess(result, now = Date.now()) {
         this._apply({ok: true, ...result}, now);
