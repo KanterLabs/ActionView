@@ -102,7 +102,9 @@ You get notified when a run fails, a job waits past your threshold, Forge
 raises or clears an alert, a data source goes stale, or Forge goes down or
 comes back. A failed 6-way matrix run is **one** notification. Each one has
 **Open log** and **Mute repo** actions, and there's a rate limit. Success and
-job-start notifications are opt-in.
+job-start notifications are opt-in. A **Forge** toggle in Quick Settings
+snoozes them for an hour, four hours or until tomorrow morning; the badge
+keeps working while they're snoozed.
 
 </td>
 </tr>
@@ -135,8 +137,10 @@ job-start notifications are opt-in.
 ### 🛡️ Honest when it can't see
 Unreachable Forge, a hung collector (`generated_at` stops moving), a stale
 source (debounced over two polls), and an unknown schema version each get a
-banner with the reason. Opening the menu counts as "seen" and clears the red
-failure badge.
+banner with the reason. When this machine itself is offline (Wi-Fi drop,
+just resumed from suspend) the badge says **No network** instead of blaming
+Forge, and it polls again the moment the network is back. Opening the menu
+counts as "seen" and clears the red failure badge.
 
 </td>
 </tr>
@@ -161,6 +165,7 @@ Everything is in the preferences window, stored in GSettings
 | `notify-success` / `notify-start` | `false` | Opt-in noise |
 | `queued-alert-minutes` | `5` | Queue wait before notifying |
 | `muted-repos` | `[]` | No notifications, not counted in the badge, dimmed in the menu |
+| `snooze-until` | `0` | Set by the Quick Settings toggle: no notifications until this Unix time |
 | `panel-show-label` / `panel-box` | `true` / `right` | Counts next to the icon; panel position |
 
 <a id="how-it-works"></a>
@@ -197,7 +202,7 @@ flowchart LR
 ## 🛠️ Development
 
 ```sh
-make test     # core unit tests under gjs AND node
+make test     # core unit tests under gjs AND node, poller tests under gjs
 make lint     # ESLint 10 flat config
 make smoke    # real headless gnome-shell end-to-end (see below)
 make pack     # build/actionview@kanterlabs.dev.shell-extension.zip
@@ -208,7 +213,8 @@ with a throwaway `HOME`, installs the packed zip, and has a test-only driver
 extension walk through 9 scenarios: idle, running, queued, failure,
 critical alert, stale source, hung collector, future schema, and unreachable.
 It records the badge, screenshots every state (the images in this README come
-from it), opens the prefs window, runs 20 enable/disable cycles, and fails on
+from it), opens the prefs window, checks that a snoozed failure reaches the
+badge but not a notification, runs 20 enable/disable cycles, and fails on
 any ActionView error in the shell log. CI runs it on every push.
 
 Test fixtures are real Forge payloads that go through

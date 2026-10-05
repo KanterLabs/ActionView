@@ -6,19 +6,20 @@ desktop notifications for the transitions you currently only catch by
 refreshing the page, and — critically — an indicator you can *trust*: it is
 loud when its data is stale or the server is unreachable.
 
-## Status (2026-09-28)
+## Status (2026-10-05)
 
-**Built and verified:** Phases 0 (repo side), 1 and 2 (client side). Phase 3 is
-partly done. Phase 4 has not started.
+**Shipped:** Phases 0 (repo side), 1 and 2 (client side). From phase 3, the
+Quick Settings snooze toggle is done. Phase 4 has not started.
 
 | Area | State |
 |---|---|
-| Core: normalize, diff state machine, connection, badge, notification planning | Done. 25 unit tests, green under `gjs` and `node` |
-| Shell: client, poller, store + persistence, notifier, indicator + 7 sections, prefs | Done. `make smoke` is green 5/5 in a real headless gnome-shell 50.1 |
+| Core: normalize, diff state machine, connection, poll application (`apply.js`), badge, notification planning, snooze, URL validation | Done. 37 unit tests, green under `gjs` and `node`; 7 gjs-only `Poller` tests with a fake scheduler |
+| Shell: client, poller, store + persistence, notifier, indicator + 7 sections, Quick Settings snooze toggle, prefs | Done. `make smoke` is green in a real headless gnome-shell 50.1 |
 | Fixtures | `base.json` is captured live over ssh and sanitized (`tools/sanitize-fixture.py`: repos, titles, users and hosts are replaced with demo values; unused sections are dropped). There are 8 derived scenarios (`tools/make-fixtures.py`) |
-| CI (`.github/workflows/ci.yml`) | `homelab` runs lint+unit; `homelab-heavy` runs the headless smoke. Both jobs were run locally in a clean `ubuntu:26.04` container as root. The smoke job needs a system bus plus a `python3-dbusmock` logind, because gnome-shell 50 crashes at startup without them. **Not yet run on GitHub** because there is no remote |
+| CI (`.github/workflows/ci.yml`) | `homelab` runs lint+unit; `homelab-heavy` runs the headless smoke. Green on GitHub (`main` push and PR runs). The smoke job needs a system bus plus a `python3-dbusmock` logind, because gnome-shell 50 crashes at startup without them |
 | ETA per running job | **Deferred to phase 3** (see §4.8) |
-| Server ETag/304, SSE, auth token | Not started (phase 4). The client already sends `If-None-Match` and handles 304 |
+| Server ETag/304, SSE, auth token | Not started (phase 4). The client already sends `If-None-Match` and handles 304. ETag alone is low value; see §7 |
+| Local network loss | A failed poll while `Gio.NetworkMonitor` reports no network is "No network": offline badge, no unreachable/recovered notifications, fresh 3-failure grace once back. Polls immediately on network return and on resume from suspend |
 | Network path for a remote desktop | **Solved with no infra change:** an existing Tailscale subnet route into the Forge LAN, which SNATs to an address Forge already allows. The client only needs `tailscale set --accept-routes` |
 
 ## 0. Ground truth (verified 2026-09-28)
@@ -130,6 +131,9 @@ actionview@kanterlabs.dev/
       badge.js                  view + state + connection → {level, label, summary}
       notifications.js          events + prefs → notifications; per-repo coalescing; rate limit
       format.js                 durations, bytes, cores, short runner names
+      apply.js                  one poll result → next {view, state, conn} + events (Store's logic)
+      snooze.js                 snooze end times and labels
+      url.js                    base URL validation/normalization for prefs
     client.js                   Soup 3; If-None-Match/304; ACTIONVIEW_FIXTURE override; shared with prefs
     poller.js                   adaptive cadence (§4.3), single in-flight, Gio.Cancellable
     store.js                    owns view/state/conn/badge; emits 'changed' + 'events'; persists
@@ -138,10 +142,12 @@ actionview@kanterlabs.dev/
     util.js                     openUri, dashboardUrl
     ui/
       indicator.js              PanelMenu.Button; renders only while the menu is open (badge always)
+      snoozeToggle.js           Quick Settings "Forge" toggle → snooze-until
       sections/  header banner jobs trends capacity recent sources
       widgets/   row (InfoRow) keyedList sparkline capacityBar
 tests/
-  core.test.js                  25 tests; `gjs -m` or `node`
+  core.test.js                  37 tests; `gjs -m` or `node`
+  poller.test.js                7 tests; `gjs -m` only (fake scheduler)
   fixtures/operations/          base.json (live capture) + running, queued, concluded-{failure,success},
                                 alert, source-stale, collector-hung, schema-future
 tools/
@@ -161,10 +167,10 @@ computed from view + diff state + connection, never from UI state.
 ### 4.2 Diff state machine (the crux of trustworthy notifications)
 Identities: running job `key` (server-provided, e.g. `arc:<runner>`), queued
 job `job_id`, run `id`.
-Persisted state (JSON, `STATE_VERSION` 1): `seenRuns {id → updatedAt}` (capped
+Persisted state (JSON, `STATE_VERSION` 2; v1 is migrated): `seenRuns {id → updatedAt}` (capped
 at 300), `activeRuns[]`, `runningKeys[]`, `queuedNotified[]`, `alerts[]`
 (normalized keys), `sourceBad {name → consecutive bad polls}`,
-`unackedFailures[]`, `savedAt`, `baselined`.
+`unackedFailures[{id, repo}]` (repo so mutes can hide them), `savedAt`, `baselined`.
 
 Events:
 - `job.started`: a key appears in `running_jobs`. Notification is opt-in.
@@ -259,8 +265,8 @@ a deploy repo where a push is a deploy.
 
 **Phase 3 — drill-down** (not started)
 Per-job ETA (needs the server-side p50 from §4.8). Per-job submenu with
-duration history. Workflows submenu from `/api/workflows`. Quick Settings mute
-toggle.
+duration history. Workflows submenu from `/api/workflows`. ~~Quick Settings mute
+toggle~~ done as a snooze toggle (1 h / 4 h / until 09:00 tomorrow).
 
 **Phase 4 — push and control (server + client)** (not started)
 `ETag` on `/api/operations`. The client side is already done.
@@ -307,3 +313,13 @@ token) — decide only if wanted.
 1. ~~Which machine runs GNOME?~~ A Fedora laptop (GNOME 49.9) on the tailnet. Installed; `forge 200` via the subnet route.
 2. Notify on job start / success by default, or failures + long queue only? (Plan defaults: failures + queue + alerts.)
 3. Is panel-side control (re-run/dispatch) wanted eventually, or read-only for good?
+4. **Decided against for now (2026-10-05):**
+   - *ETag on its own.* The payload embeds `served_at` and a 5 s history
+     sample, so it changes on almost every active poll and a 304 would rarely
+     happen. Only worth it together with SSE, or with an ETag computed over
+     the payload minus `served_at`.
+   - *Re-run from a notification.* Needs a credential on the desktop, which
+     breaks "no tokens on your desktop", plus an authenticated control
+     endpoint on Forge. "Open log" is one click from GitHub's re-run button.
+   - *Client-only ETA.* Ship it together with the server's
+     `duration_p50_seconds` (§4.8), not ahead of it.
