@@ -445,6 +445,47 @@ test('snooze: end times, expiry and labels (local time)', () => {
     eq(snoozeLabel(later, now), 'Fri 09:00');
 });
 
+test('hosted: unavailable metrics and inactive sources keep a healthy badge', () => {
+    const v = view('hosted');
+    assert(v.schemaSupported);
+    assert(v.running[0].metricsUnavailable);
+    eq(v.running[0].cpuMillicores, null);
+    let result = diff(initialState(), v, nowOf(v));
+    result = diff(result.state, v, nowOf(v));
+    eq(confirmedBadSources(result.state), []);
+    eq(computeBadge({view: v, state: result.state, conn: initialConnection(), now: nowOf(v)}).level,
+        'running');
+    const disabled = normalize({schema_version: 5, sources: {host: {enabled: false, state: 'unavailable'}}});
+    eq(disabled.sources[0].state, 'disabled');
+});
+
+test('hosted: same-name jobs retain provider identity', () => {
+    const f = fixture('hosted');
+    const job = {...f.running_jobs[0], job_id: 99};
+    f.running_jobs = [job];
+    f.jobs = [{...job, job_id: 100, status: 'queued'}];
+    const v = normalize(f);
+    eq(v.running[0].key, '99');
+    eq(v.queued.length, 1);
+});
+
+test('hosted: completed attempt between polls is notified once across restore', () => {
+    const f = fixture('concluded-failure');
+    f.recent_runs[0].run_attempt = 1;
+    const first = normalize(f);
+    const base = diff(initialState(), first, nowOf(first));
+    f.recent_runs[0].run_attempt = 2;
+    // Same timestamp demonstrates that provider attempt is the authoritative identity.
+    const second = normalize(f);
+    const done = diff(restoreState(JSON.parse(JSON.stringify(base.state)), nowOf(first)), second, nowOf(first));
+    eq(types(done.events), ['run.concluded']);
+    eq(done.events[0].run.runAttempt, 2);
+    assert(done.events[0].id.includes('@2:'));
+    const restored = restoreState(JSON.parse(JSON.stringify(done.state)), nowOf(first));
+    eq(diff(restored, second, nowOf(first)).events, []);
+    eq(diff(restored, first, nowOf(first)).events, [], 'old attempt never replays');
+});
+
 // ── runner ───────────────────────────────────────────────────────────────────
 
 let failed = 0;

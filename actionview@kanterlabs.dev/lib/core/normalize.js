@@ -11,6 +11,7 @@ export const SUPPORTED_SCHEMA = 5;
 export const FAILURE_CONCLUSIONS = new Set(['failure', 'timed_out', 'startup_failure']);
 // 'partial' (some errors, data still flowing) and 'loading' are not staleness.
 export const BAD_SOURCE_STATES = new Set(['stale', 'unavailable']);
+export const INACTIVE_SOURCE_STATES = new Set(['disabled', 'not_applicable']);
 
 const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 const arr = v => (Array.isArray(v) ? v.filter(x => x && typeof x === 'object') : []);
@@ -26,12 +27,12 @@ function repoParts(item) {
     return {repo: repo || '?', repoFullName: full};
 }
 
-function runningJob(job) {
+function runningJob(job, capabilities) {
     const usage = obj(job.resource_usage);
     const runId = str(job.workflow_run_id);
     const name = str(job.job) || 'Job';
     return {
-        key: str(job.key) || `${runId}:${normalizeJobName(name)}:${str(job.runner)}`,
+        key: str(job.job_id) || str(job.key) || `${runId}:${normalizeJobName(name)}:${str(job.runner)}`,
         ...repoParts(job),
         job: name,
         workflow: str(job.workflow),
@@ -45,6 +46,9 @@ function runningJob(job) {
         actor: str(job.actor),
         url: str(job.url),
         source: str(job.source),
+        metricsUnavailable: capabilities.job_metrics === false ||
+            job.runner_tier === 'github-hosted' ||
+            ['unavailable', 'unsupported', 'not_applicable'].includes(usage.state),
         cpuMillicores: num(usage.cpu_millicores),
         memoryBytes: num(usage.memory_bytes),
     };
@@ -72,6 +76,7 @@ function queuedJob(job) {
 function run(item) {
     return {
         id: str(item.id),
+        runAttempt: num(item.run_attempt) === null ? null : Math.max(1, Math.trunc(num(item.run_attempt))),
         ...repoParts(item),
         workflow: str(item.workflow) || 'Workflow',
         title: str(item.title),
@@ -182,11 +187,11 @@ export function normalize(payload) {
     if (schemaVersion === null && parseTime(p.served_at) === null)
         return null;
 
-    const running = arr(p.running_jobs).map(runningJob);
+    const running = arr(p.running_jobs).map(j => runningJob(j, obj(p.capabilities)));
     // GitHub still reports a job "queued" while ARC already has a pod starting
     // for it; the web page lists it twice. Drop queued entries that are running.
     const runningIds = new Set(running.map(j => j.jobId).filter(Boolean));
-    const runningRunJobs = new Set(running.map(j => `${j.runId}:${normalizeJobName(j.job)}`));
+    const runningRunJobs = new Set(running.filter(j => !j.jobId).map(j => `${j.runId}:${normalizeJobName(j.job)}`));
     const queued = arr(p.jobs)
         .filter(j => j.status !== 'in_progress')
         .map(queuedJob)
@@ -198,7 +203,7 @@ export function normalize(payload) {
         return {
             name,
             label: humanize(name),
-            state: str(s.state) || 'unknown',
+            state: s.enabled === false ? 'disabled' : str(s.state) || 'unknown',
             lastSuccessAt: parseTime(s.last_success_at),
             durationMs: num(s.duration_ms),
             detail: sourceDetail(s),

@@ -8,14 +8,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint-and-unit:
     # Lint + pure-JS core tests: short and light.
-    # Public repo on self-hosted runners: never run fork PRs (untrusted code) on them.
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: homelab
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     container:
       image: ubuntu:26.04
     steps:
@@ -38,12 +39,9 @@ jobs:
 
   headless-shell:
     # Real gnome-shell 50 in a headless Wayland session: scenario screenshots,
-    # prefs window, and 20 enable/disable cycles. Integration suite → heavy tier.
-    # Public repo on self-hosted runners: never run fork PRs (untrusted code) on them.
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: homelab-heavy
+    # prefs window, and 20 enable/disable cycles. Integration suite uses the same GNOME 50 container.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     container:
       image: ubuntu:26.04
     steps:

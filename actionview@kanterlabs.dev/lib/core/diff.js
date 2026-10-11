@@ -19,6 +19,7 @@ export function initialState() {
         version: STATE_VERSION,
         baselined: false,
         savedAt: 0,
+        seenAttempts: {}, // repository/run identity → latest completed attempt
         seenRuns: {}, // run id → updatedAt ms of the conclusion we already handled
         activeRuns: [], // run ids observed queued/running since their last conclusion
         runningKeys: [],
@@ -59,7 +60,7 @@ export function restoreState(raw, now) {
         if (isStrings(raw[key]))
             state[key] = [...raw[key]];
     }
-    for (const key of ['seenRuns', 'sourceBad']) {
+    for (const key of ['seenRuns', 'seenAttempts', 'sourceBad']) {
         if (isNumberMap(raw[key]))
             state[key] = {...raw[key]};
     }
@@ -115,18 +116,29 @@ export function diff(prev, view, now, options = {}) {
         }
     }
 
-    // Runs concluded. A run is reported when its id is new to us, or when we
-    // saw it active again since its last conclusion (re-runs keep their id).
+    // Provider attempts also detect reruns that finish entirely between polls.
+    // Older v5 feeds without attempts retain the observed-active fallback.
     const seenRuns = {...prev.seenRuns};
+    const seenAttempts = {...prev.seenAttempts};
     const activeRuns = new Set([...prev.activeRuns, ...view.activeRunIds]);
     const unacked = new Map(prev.unackedFailures.map(f => [f.id, f.repo]));
     for (const run of view.recent) {
         if (run.status !== 'completed' || !run.conclusion)
             continue;
+        const identity = `${run.repoFullName || run.repo}:${run.id}`;
+        const attempt = run.runAttempt ?? 1;
+        const priorAttempt = seenAttempts[identity];
         const known = Object.hasOwn(seenRuns, run.id);
-        const rerun = known && activeRuns.has(run.id) &&
+        // Seed legacy persisted states without replaying their latest conclusion.
+        // Advancing from default attempt 1 still catches new reruns immediately.
+        const newAttempt = known && attempt > (priorAttempt ?? 1) &&
+            (priorAttempt !== undefined || seenRuns[run.id] !== run.updatedAt);
+        if (priorAttempt !== undefined && attempt < priorAttempt)
+            continue;
+        seenAttempts[identity] = Math.max(priorAttempt ?? 1, attempt);
+        const rerun = run.runAttempt === null && known && activeRuns.has(run.id) &&
             !view.activeRunIds.includes(run.id) && seenRuns[run.id] !== run.updatedAt;
-        if (!known || rerun) {
+        if (!known || rerun || newAttempt) {
             seenRuns[run.id] = run.updatedAt ?? now;
             activeRuns.delete(run.id);
             const failed = FAILURE_CONCLUSIONS.has(run.conclusion);
@@ -134,7 +146,7 @@ export function diff(prev, view, now, options = {}) {
                 unacked.set(run.id, run.repo);
             else if (!failed)
                 unacked.delete(run.id);
-            emit({type: 'run.concluded', id: `${run.id}@${run.updatedAt}`, repo: run.repo,
+            emit({type: 'run.concluded', id: `${identity}@${attempt}:${run.updatedAt}`, repo: run.repo,
                 run, failed});
         }
     }
@@ -170,12 +182,15 @@ export function diff(prev, view, now, options = {}) {
         }
     }
 
+    const boundedSeen = trimSeen(seenRuns);
     return {
         state: {
             version: STATE_VERSION,
             baselined: true,
             savedAt: now,
-            seenRuns: trimSeen(seenRuns),
+            seenRuns: boundedSeen,
+            seenAttempts: Object.fromEntries(Object.entries(seenAttempts)
+                .filter(([identity]) => Object.hasOwn(boundedSeen, identity.slice(identity.lastIndexOf(':') + 1)))),
             activeRuns: [...activeRuns],
             runningKeys: view.running.map(j => j.key),
             queuedNotified: [...queuedNotified].filter(k => stillQueued.has(k)),

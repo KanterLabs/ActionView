@@ -1,6 +1,6 @@
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-import {BAD_SOURCE_STATES} from '../../core/normalize.js';
+import {BAD_SOURCE_STATES, INACTIVE_SOURCE_STATES} from '../../core/normalize.js';
 import {ago} from '../../core/format.js';
 import {KeyedList} from '../widgets/keyedList.js';
 import {InfoRow} from '../widgets/row.js';
@@ -21,7 +21,8 @@ export class SourcesSection {
     }
 
     update(store, now) {
-        const sources = store.view?.sources ?? [];
+        const sources = (store.view?.sources ?? [])
+            .filter(s => !INACTIVE_SOURCE_STATES.has(s.state));
         this.section.actor.visible = sources.length > 0;
         const bad = sources.filter(s => BAD_SOURCE_STATES.has(s.state));
         const other = sources.filter(s => s.state !== 'fresh' && !BAD_SOURCE_STATES.has(s.state));

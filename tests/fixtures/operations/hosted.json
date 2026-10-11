@@ -1,0 +1,65 @@
+{
+  "cluster": {},
+  "generated_at": "2026-09-28T13:17:36.166444Z",
+  "host": {},
+  "recent_runs": [
+    {
+      "actor": "octocat",
+      "branch": "main",
+      "conclusion": "success",
+      "created_at": "2026-09-28T12:58:46Z",
+      "event": "push",
+      "id": 36425360197,
+      "repo": "api-server",
+      "repo_full_name": "example-org/api-server",
+      "status": "completed",
+      "title": "feat: example change 1",
+      "updated_at": "2026-09-28T13:00:29Z",
+      "url": "https://github.com/example-org/api-server/actions/runs/36425360197",
+      "workflow": "Release",
+      "workflow_ref": ".github/workflows/release.yml",
+      "run_attempt": 1
+    }
+  ],
+  "runners": [],
+  "running_jobs": [
+    {
+      "actor": "octocat",
+      "arc_phase": "Running",
+      "branch": "main",
+      "detected_at": "2026-09-28T13:16:36.493532Z",
+      "job": "build (linux-x64)",
+      "job_id": 99000000001,
+      "key": "arc:homelab-heavy-p6hw7-runner-78zz7",
+      "last_seen_at": "2026-09-28T13:17:37.493532Z",
+      "repo": "web-app",
+      "repo_full_name": "example-org/web-app",
+      "resource_usage": {},
+      "runner": "GitHub Actions 1",
+      "runner_ready": true,
+      "runner_tier": "github-hosted",
+      "source": "arc+github",
+      "started_at": "2026-09-28T13:16:36.493532Z",
+      "status": "in_progress",
+      "url": "https://github.com/example-org/web-app/actions/runs/46000000001/job/99000000001",
+      "workflow": "CI",
+      "workflow_run_id": 46000000001
+    }
+  ],
+  "schema_version": 5,
+  "served_at": "2026-09-28T13:17:37.493532Z",
+  "sources": {
+    "github": {
+      "state": "fresh"
+    },
+    "arc": {
+      "state": "disabled"
+    },
+    "host": {
+      "state": "not_applicable"
+    }
+  },
+  "capabilities": {
+    "job_metrics": false
+  }
+}

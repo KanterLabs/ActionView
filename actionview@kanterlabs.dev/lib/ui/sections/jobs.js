@@ -71,8 +71,9 @@ export class JobsSection {
     tick(now) {
         this._runningList.forEach(({item}) => {
             const job = item.job;
-            const cpu = job.cpuMillicores === null ? 'collecting…' : cores(job.cpuMillicores);
-            const mem = job.memoryBytes === null ? '' : bytes(job.memoryBytes);
+            const cpu = job.metricsUnavailable ? 'metrics unavailable'
+                : job.cpuMillicores === null ? 'collecting…' : cores(job.cpuMillicores);
+            const mem = job.metricsUnavailable || job.memoryBytes === null ? '' : bytes(job.memoryBytes);
             item.set({
                 title: `${job.repo} · ${job.job}`,
                 right: job.startedAt === null ? '' : duration((now - job.startedAt) / 1000),
