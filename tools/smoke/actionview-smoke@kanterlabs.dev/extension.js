@@ -138,10 +138,15 @@ export default class SmokeDriver extends Extension {
         check(toggle.get_parent() !== null, 'toggle is not in Quick Settings');
         check(toggle.checked, 'notifications should start on');
 
+        // Earlier scenarios consumed the shared notification quota. Give this
+        // independent snooze check room to send its recovery notification.
+        ext._notifier._sentAt = [];
         let shown = 0;
+        let lastShown = null;
         const show = ext._notifier._show.bind(ext._notifier);
         ext._notifier._show = n => {
             shown++;
+            lastShown = n;
             show(n);
         };
 
@@ -167,7 +172,8 @@ export default class SmokeDriver extends Extension {
         toggle.emit('clicked', 1);
         check(toggle.checked && toggle.subtitle === 'On', 'click did not resume');
         ext._notifier.handle([{type: 'forge.recovered', id: 'forge'}]);
-        check(shown === 1, 'notifications did not resume');
+        check(shown === 1 && lastShown?.title === 'Forge is reachable again',
+            'recovery notification did not resume');
 
         ext._notifier._show = show;
         copy(`${dir}/base.json`, live);
