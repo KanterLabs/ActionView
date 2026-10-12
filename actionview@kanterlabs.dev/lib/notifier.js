@@ -36,14 +36,12 @@ export class Notifier {
         });
         if (!planned.length)
             return;
-        const {send, suppressed, sentAt} = rateLimit(planned, this._sentAt, Date.now());
+        const {send, sentAt} = rateLimit(planned, this._sentAt, Date.now());
         this._sentAt = sentAt;
         for (const n of send)
             this._show(n);
-        if (suppressed) {
-            this._show({title: `${suppressed} more Forge event${suppressed === 1 ? '' : 's'}`,
-                body: 'Open the ActionView menu for details.', urgency: 'low', url: '', repo: ''});
-        }
+        // Suppressed events remain in the menu. An extra summary banner here
+        // would bypass the same limit on every subsequent poll.
     }
 
     _getSource() {

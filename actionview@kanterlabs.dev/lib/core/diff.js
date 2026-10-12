@@ -7,7 +7,8 @@
 import {FAILURE_CONCLUSIONS, BAD_SOURCE_STATES} from './normalize.js';
 
 export const STATE_VERSION = 2;
-const SEEN_RUNS_MAX = 300;
+// Keep the full visible feed plus a bounded cache of runs that left it.
+const SEEN_RUNS_OFF_FEED_MAX = 300;
 // A persisted state older than this is discarded and the next poll re-baselines
 // (no replay of a whole weekend of runs after a long suspend).
 export const STATE_MAX_AGE_MS = 60 * 60 * 1000;
@@ -73,12 +74,12 @@ export function alertKey(alert) {
     return `${alert.level}:${alert.message.replace(/\d+(\.\d+)?/g, '#')}`;
 }
 
-function trimSeen(seen) {
+function trimSeen(seen, currentIds) {
     const entries = Object.entries(seen);
-    if (entries.length <= SEEN_RUNS_MAX)
-        return seen;
-    entries.sort((a, b) => b[1] - a[1]);
-    return Object.fromEntries(entries.slice(0, SEEN_RUNS_MAX));
+    const visible = entries.filter(([id]) => currentIds.has(id));
+    const older = entries.filter(([id]) => !currentIds.has(id));
+    older.sort((a, b) => b[1] - a[1]);
+    return Object.fromEntries([...visible, ...older.slice(0, SEEN_RUNS_OFF_FEED_MAX)]);
 }
 
 /**
@@ -182,7 +183,7 @@ export function diff(prev, view, now, options = {}) {
         }
     }
 
-    const boundedSeen = trimSeen(seenRuns);
+    const boundedSeen = trimSeen(seenRuns, recentIds);
     return {
         state: {
             version: STATE_VERSION,

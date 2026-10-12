@@ -371,7 +371,7 @@ test('badge: critical summary names the critical alert', () => {
 test('notifications: failure on by default, success off', () => {
     const fail = planNotifications(transition('base', 'concluded-failure').events, PREFS);
     eq(fail.length, 1);
-    eq(fail[0].urgency, 'high');
+    eq(fail[0].urgency, 'normal');
     eq(fail[0].title, 'web-app: CI failed');
     assert(fail[0].url.includes('/actions/runs/'));
     eq(planNotifications(transition('base', 'concluded-success').events, PREFS), []);
@@ -484,6 +484,59 @@ test('hosted: completed attempt between polls is notified once across restore', 
     const restored = restoreState(JSON.parse(JSON.stringify(done.state)), nowOf(first));
     eq(diff(restored, second, nowOf(first)).events, []);
     eq(diff(restored, first, nowOf(first)).events, [], 'old attempt never replays');
+});
+
+test('hosted: 500-run history stays silent across polls and restore', () => {
+    const f = fixture('concluded-failure');
+    const now = Date.parse(f.served_at);
+    const template = f.recent_runs[0];
+    f.recent_runs = Array.from({length: 500}, (_, i) => ({...template,
+        id: 50000000000 + i, run_attempt: 1,
+        updated_at: new Date(now - (i + 1) * 1000).toISOString()}));
+    const v = normalize(f);
+    const base = diff(initialState(), v, now);
+    const repeated = diff(base.state, v, now + 5000);
+    eq(repeated.events.length, 0, 'visible older runs must not be forgotten');
+    eq(repeated.state.unackedFailures, []);
+    const restored = restoreState(JSON.parse(JSON.stringify(repeated.state)), now + 10000);
+    eq(diff(restored, v, now + 10000).events.length, 0, 'restart must not replay history');
+    f.recent_runs[499].run_attempt = 2;
+    const rerun = diff(restored, normalize(f), now + 15000);
+    eq(rerun.events.length, 1, 'a real rerun still reports once with the same timestamp');
+    eq(rerun.events[0].run.runAttempt, 2);
+    eq(diff(rerun.state, normalize(f), now + 20000).events.length, 0);
+});
+
+test('hosted: old cache seeds once while muted and delayed new runs still notify', () => {
+    const f = fixture('concluded-failure');
+    const now = Date.parse(f.served_at);
+    const template = f.recent_runs[0];
+    const history = Array.from({length: 500}, (_, i) => ({...template,
+        id: 51000000000 + i, run_attempt: 1,
+        updated_at: new Date(now - (i + 1) * 1000).toISOString()}));
+    f.recent_runs = history.slice(0, 300);
+    const before = diff(initialState(), normalize(f), now);
+    f.recent_runs = history;
+    const backfill = diff(before.state, normalize(f), now + 5000);
+    eq(planNotifications(backfill.events, {...PREFS, notifyFailure: false}), [],
+        'the deployment mute consumes old forgotten IDs quietly');
+    eq(diff(backfill.state, normalize(f), now + 6000).events.length, 0,
+        'expanded state must not replay those IDs again');
+    f.recent_runs.unshift({...template, id: 52000000000, run_attempt: 1,
+        updated_at: new Date(now + 1000).toISOString()});
+    const fresh = diff(backfill.state, normalize(f), now + 10000);
+    eq(types(fresh.events), ['run.concluded'], 'a delayed new failure older than the last client poll is still reported');
+    eq(fresh.events[0].run.id, '52000000000');
+});
+
+test('notifications: failures across repositories respect the rate limit', () => {
+    const failure = transition('base', 'concluded-failure').events[0];
+    const events = Array.from({length: 12}, (_, i) => ({...failure, id: `burst-${i}`,
+        repo: `repo-${i}`}));
+    const limited = rateLimit(planNotifications(events, PREFS), [], 0);
+    eq(limited.send.length, 6);
+    eq(limited.suppressed, 6);
+    eq(rateLimit(planNotifications(events, PREFS), limited.sentAt, 5000).send.length, 0);
 });
 
 // ── runner ───────────────────────────────────────────────────────────────────

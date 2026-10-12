@@ -50,7 +50,9 @@ export function planNotifications(events, prefs) {
                 ? `${first.repo}: ${first.run.workflow} ${verb}`
                 : `${first.repo}: ${group.length} runs ${verb}`,
             body: lines.join('\n'),
-            urgency: failed ? 'high' : 'low',
+            // CI failures are ordinary events; only critical infrastructure
+            // alerts bypass the rolling notification limit.
+            urgency: failed ? 'normal' : 'low',
             url: first.run.url,
             repo: first.repo,
         });
